@@ -1,0 +1,9 @@
+{
+  "name": "Huishoudfinanciën",
+  "short_name": "Financiën",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f7fc",
+  "theme_color": "#13315c",
+  "icons": [{ "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }]
+}

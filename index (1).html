@@ -1,0 +1,1680 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Financiën">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.png">
+<meta name="theme-color" content="#13315c">
+<title>Huishoudfinanciën</title>
+<style>
+:root{
+  --b950:#071a33;--b900:#0b2545;--b800:#13315c;--b700:#1a4480;--b600:#1d5fbf;--b500:#3d7cc9;
+  --b400:#5b8fd9;--b300:#93b8ea;--b200:#c4d8f3;--b100:#e8f0fb;--b50:#f4f7fc;
+  --ink:#10213a;--muted:#5a6b85;--line:#dbe4f0;--warn:#b45309;--warnbg:#fff4e0;--ok:#11734b;--bad:#b42318;
+  --card:#ffffff;--radius:14px;--shadow:0 1px 2px rgba(16,33,58,.06),0 4px 16px rgba(16,33,58,.06);
+  --exp:#d9773a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--b50);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+.app{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
+nav.side{background:linear-gradient(180deg,var(--b900),var(--b800));color:#fff;padding:20px 12px;position:sticky;top:0;height:100vh;overflow:auto}
+.brand{font-weight:700;font-size:17px;padding:4px 10px 18px;letter-spacing:.2px}
+.brand small{display:block;font-weight:400;color:var(--b300);font-size:12px;margin-top:2px}
+nav.side a{display:flex;align-items:center;gap:10px;color:var(--b200);text-decoration:none;padding:9px 12px;border-radius:10px;margin:2px 0;font-size:14.5px}
+nav.side a:hover{background:rgba(255,255,255,.07);color:#fff}
+nav.side a.on{background:var(--b600);color:#fff}
+nav.side svg{width:18px;height:18px;flex:none}
+main{padding:28px 32px 90px;max-width:1180px;width:100%}
+h1{font-size:24px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 22px}
+h2{font-size:17px;margin:0 0 12px}
+.card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 20px;margin-bottom:18px}
+.grid{display:grid;gap:16px}
+.g4{grid-template-columns:repeat(4,1fr)}.g2{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:repeat(3,1fr)}
+.tile{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;border-top:4px solid var(--b600)}
+.tile .lbl{color:var(--muted);font-size:13px}
+.tile .val{font-size:24px;font-weight:700;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+.tile .note{font-size:12.5px;color:var(--muted)}
+.tile.alt{border-top-color:var(--b400)}.tile.alt2{border-top-color:var(--b300)}.tile.alt3{border-top-color:var(--b900)}
+.warn{background:var(--warnbg);color:var(--warn);border-radius:10px;padding:8px 12px;font-size:13.5px;margin:8px 0}
+.info{background:var(--b100);color:var(--b800);border-radius:10px;padding:10px 14px;font-size:13.5px;margin:8px 0 14px}
+.btn{background:var(--b600);color:#fff;border:0;border-radius:10px;padding:8px 14px;cursor:pointer;font-weight:600;font-size:14px;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--b700)}
+.btn.sec{background:var(--b100);color:var(--b800)}.btn.sec:hover{background:var(--b200)}
+.btn.ghost{background:transparent;color:var(--b600);padding:6px 8px}.btn.ghost:hover{background:var(--b100)}
+.btn.danger{background:#fde8e6;color:var(--bad)}
+.btn.sm{padding:5px 10px;font-size:13px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.spacer{flex:1}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{color:var(--muted);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.3px;background:var(--b50)}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.tot td{font-weight:700;border-top:2px solid var(--b200)}
+.tablewrap{overflow-x:auto}
+.badge{display:inline-block;font-size:11.5px;padding:2px 8px;border-radius:99px;background:var(--b100);color:var(--b700);font-weight:600;white-space:nowrap}
+.badge.w{background:var(--warnbg);color:var(--warn)}.badge.g{background:#e3f4ec;color:var(--ok)}.badge.d{background:var(--b800);color:#fff}
+.muted{color:var(--muted)}.small{font-size:12.5px}
+.neg{color:var(--bad)}.pos{color:var(--ok)}
+.acc{display:grid;grid-template-columns:1fr auto;gap:6px 16px;align-items:center}
+.acc .nm{font-weight:650;font-size:16px}
+.acc .v{font-size:22px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.chart{width:100%;overflow:hidden}
+.chart svg{display:block;width:100%;height:auto}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.cal{display:grid;gap:8px}
+.cal .ev{display:flex;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.cal .dt{width:74px;flex:none;font-weight:650;color:var(--b700);font-size:13px}
+/* modal */
+.ov{position:fixed;inset:0;background:rgba(7,26,51,.45);display:flex;align-items:flex-start;justify-content:center;padding:6vh 14px;z-index:50;overflow:auto}
+.modal{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.25);width:100%;max-width:520px;padding:22px}
+.modal h3{margin:0 0 14px;font-size:18px}
+.f{margin-bottom:12px}
+.f label{display:block;font-size:13px;font-weight:600;color:var(--b800);margin-bottom:4px}
+.f input:not([type=checkbox]),.f select,.f textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:#fff}
+.f input:focus,.f select:focus,.f textarea:focus{outline:2px solid var(--b300);border-color:var(--b500)}
+.f .help{font-size:12px;color:var(--muted);margin-top:3px}
+.f.cb label{display:flex;gap:8px;align-items:center;font-weight:500}
+.err{color:var(--bad);font-size:13px;margin:4px 0}
+.actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.toggle{display:inline-flex;background:var(--b100);border-radius:10px;padding:3px}
+.toggle button{border:0;background:transparent;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:13.5px;color:var(--b800)}
+.toggle button.on{background:#fff;box-shadow:var(--shadow);font-weight:600}
+input.cell{width:76px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;text-align:right}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--b900);color:#fff;padding:10px 18px;border-radius:10px;z-index:60;font-size:14px;box-shadow:var(--shadow)}
+input.gcell{width:120px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;text-align:right;background:#fff}
+input.gcell:focus{outline:2px solid var(--b300);border-color:var(--b500)}
+input.gcell:disabled,input.gcell[data-calc]{background:var(--b50);color:var(--b800);font-weight:600;border-style:dashed}
+tr.gcat td{background:#fff}tr.gtot td,tr.gtot th{background:var(--b100)!important;border-bottom:2px solid var(--b200)}tr.gsub td{border-bottom-color:#eef2f8;padding-top:5px;padding-bottom:5px}
+.mstrip{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.mchip{border:1px solid var(--b200);background:#fff;color:var(--b700);border-radius:7px;padding:3px 7px;font-size:12px;cursor:pointer;min-width:38px}
+.mchip.f{background:var(--b700);color:#fff;border-color:var(--b700)}
+.ywrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+.ytab{border-collapse:separate;border-spacing:0;font-size:13px;width:100%;min-width:940px}
+.ytab th,.ytab td{padding:3px 3px;border-bottom:1px solid #eef2f8;white-space:nowrap}
+.ytab thead th{position:sticky;top:0;background:var(--b50);text-align:center;font-size:12px;z-index:1;text-transform:none;letter-spacing:0;color:var(--b700)}
+.ytab thead th a{color:var(--b700);text-decoration:none;font-weight:700;text-transform:capitalize}
+.ytab thead th.ynow{background:var(--b100)}
+.ytab .yname{position:sticky;left:0;background:#fff;text-align:left;font-weight:600;min-width:140px;max-width:150px;width:150px;overflow:hidden;text-overflow:ellipsis;z-index:2;text-transform:none;letter-spacing:0;color:var(--ink);font-size:13px}
+.ytab thead .yname{background:var(--b50);z-index:3}
+.ytab .yname.sub{font-weight:400;color:var(--muted);padding-left:30px}
+.ytab td{position:relative}
+.ytab input.yc{width:100%;min-width:52px;padding:4px 5px;font-size:12.5px;border-radius:6px}
+.ytab tr.gsub input.yc{background:#fbfcfe}
+.ytab .ytot{font-weight:700;padding-right:10px}
+.ytab tfoot th,.ytab tfoot td{border-top:2px solid var(--b200);font-weight:700;background:var(--b50);padding:7px 6px}
+.ldot{position:absolute;top:5px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--b500)}
+.lgroups{flex-direction:column;gap:10px}.lhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.lhead b{font-size:13.5px}.pdates{font-size:12px;color:var(--b800)}.pdates.muted{color:var(--muted)}.litems{display:flex;gap:14px;flex-wrap:wrap;margin-top:3px}.lgrp{display:block}.lgrp b{color:var(--ink)}
+.mp{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.mp-y{display:flex;gap:4px;align-items:center}
+.mpYear{padding:5px 8px;border:1px solid var(--line);border-radius:8px;font-weight:700;color:var(--b800);background:#fff}
+.mp-m{display:grid;grid-template-columns:repeat(12,1fr);gap:4px;flex:1;min-width:280px}
+.mp .mchip{min-width:0;padding:7px 0;font-size:13px}
+.mchip.fut{border-style:dashed}
+.mchip.now{box-shadow:inset 0 -3px 0 var(--b400)}
+@media (max-width:900px){ .mp-m{grid-template-columns:repeat(6,1fr);min-width:100%} }
+.mchip.on{outline:3px solid var(--b300);outline-offset:1px;font-weight:700}
+input.catname{padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-weight:600;min-width:200px;flex:1;max-width:320px}
+input.catname:focus,input.subname:focus,input.subnew:focus{outline:2px solid var(--b300);border-color:var(--b500)}
+.cathead{flex-wrap:nowrap}.cathead input.catname{min-width:0}
+.catbox{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;background:#fff}
+.catnr{width:22px;height:22px;border-radius:50%;background:var(--b100);color:var(--b700);font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:none}
+.subs{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0 30px;align-items:center}
+.subchip{display:inline-flex;align-items:center;background:var(--b100);border-radius:99px;padding:2px 4px 2px 10px}
+.subchip input{border:0;background:transparent;font-size:13px;color:var(--b800);padding:3px 0;min-width:40px}
+.subchip button{border:0;background:transparent;color:var(--b600);cursor:pointer;font-size:12px;padding:2px 6px;border-radius:99px}
+.subchip button:hover{background:var(--b200)}
+.subadd{display:inline-flex;gap:4px;align-items:center}
+.subadd input{border:1px dashed var(--b300);border-radius:99px;padding:4px 10px;font-size:13px}
+button[disabled]{opacity:.3;cursor:default}
+@media (max-width:900px){ .catgrid{grid-template-columns:1fr!important} input.catname{min-width:120px} .subs{margin-left:0} }
+#tip{white-space:pre-line;position:fixed;z-index:70;pointer-events:none;background:var(--b950);color:#fff;font-size:12.5px;padding:6px 10px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.2);max-width:320px;display:none}
+.rank{display:block}.rank .rk{margin-bottom:2px}
+.rk{display:grid;grid-template-columns:minmax(110px,34%) 1fr 124px;gap:10px;align-items:center;padding:6px 6px;border-radius:8px;cursor:pointer}
+.rk:hover,.rk.foc{background:var(--b100)}
+.rk-l{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rk-l i,.sw{width:10px;height:10px;border-radius:3px;flex:none;display:inline-block;margin-right:6px}
+.rk-b{height:14px;background:var(--b50);border-radius:4px;overflow:hidden}
+.rk-f{height:100%;background:var(--b600);border-radius:0 4px 4px 0;min-width:2px}
+.rk-v{text-align:right;font-variant-numeric:tabular-nums;font-weight:650;font-size:14px;white-space:nowrap}
+.rk-v span{display:inline-block;width:54px;color:var(--muted);font-weight:500;font-size:12px}
+.anside{position:sticky;top:16px;align-self:start}
+.rk.sub{cursor:default;padding-top:2px;padding-bottom:2px}.rk.sub:hover{background:transparent}
+.rk.sub .rk-l{font-weight:400;font-size:13px;color:var(--muted);padding-left:18px}
+.rk.sub .rk-b{height:8px}.rk.sub .rk-f{background:var(--b300)}
+.rk.sub .rk-v{font-weight:400;font-size:13px;color:var(--muted)}
+@media (max-width:900px){ .angrid{grid-template-columns:1fr!important} .anside{position:static} .rk{grid-template-columns:40% 1fr 92px} }
+details summary{cursor:pointer;color:var(--b600);font-size:13.5px;margin-top:8px}
+@media (max-width:900px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  nav.side{position:fixed;bottom:0;top:auto;left:0;right:0;height:auto;padding:6px 6px calc(6px + env(safe-area-inset-bottom));display:flex;overflow-x:auto;z-index:40;gap:2px}
+  .brand{display:none}
+  nav.side a{flex-direction:column;gap:2px;font-size:10.5px;padding:6px 8px;min-width:64px;text-align:center;margin:0}
+  main{padding:18px 14px 110px}
+  .g4{grid-template-columns:repeat(2,1fr)}.g2,.g3{grid-template-columns:1fr}
+  .tile .val{font-size:20px}
+}
+.sync{font-weight:600}.sync.ok{color:var(--ok)}.sync.fout{color:var(--bad)}.sync.lokaal,.sync.traag{color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="side" id="nav"></nav>
+  <main id="main"></main>
+</div>
+<div id="modalRoot"></div>
+<div id="tip"></div>
+<script>
+"use strict";
+/* ============ Hulpfuncties ============ */
+const $ = s => document.querySelector(s);
+const eur = new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR',maximumFractionDigits:0});
+const eur2 = new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR',minimumFractionDigits:2,maximumFractionDigits:2});
+const eurC = new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR',notation:'compact',maximumFractionDigits:1});
+const E = v => v==null||isNaN(v) ? '–' : eur.format(v);
+const E2 = v => v==null||isNaN(v) ? '–' : eur2.format(v);
+const P = v => v==null||isNaN(v) ? '–' : (v*100).toFixed(1).replace('.',',')+'%';
+const uid = () => Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-5);
+const pad = n => String(n).padStart(2,'0');
+const todayStr = () => {const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
+const curYm = () => todayStr().slice(0,7);
+const curY = () => +todayStr().slice(0,4);
+const ymI = ym => {const [y,m]=ym.split('-').map(Number);return y*12+m-1;};
+const iYm = i => Math.floor(i/12)+'-'+pad(i%12+1);
+const lastDay = ym => ym+'-'+pad(new Date(+ym.slice(0,4), +ym.slice(5,7), 0).getDate());
+const mName = ym => new Date(+ym.slice(0,4), +ym.slice(5,7)-1, 15).toLocaleDateString('nl-NL',{month:'short',year:'2-digit'});
+const mLong = ym => new Date(+ym.slice(0,4), +ym.slice(5,7)-1, 15).toLocaleDateString('nl-NL',{month:'long',year:'numeric'});
+const dNl = d => d ? new Date(d+'T12:00').toLocaleDateString('nl-NL',{day:'numeric',month:'short',year:'numeric'}) : '';
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sum = a => a.reduce((s,x)=>s+(+x||0),0);
+function parseNum(s){
+  if(s==null) return NaN; s=String(s).trim().replace(/[€\s]/g,''); if(s==='') return NaN;
+  if(s.includes(',')) s=s.replace(/\./g,'').replace(',','.');
+  else if(/^-?\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,'');
+  return parseFloat(s);
+}
+/* Nederlandse datuminvoer: dd-mm-jjjj en mm-jjjj */
+const isoToNl = d => isDateS(d) ? d.slice(8)+'-'+d.slice(5,7)+'-'+d.slice(0,4) : '';
+const ymToNl = ym => /^\d{4}-\d{2}$/.test(ym||'') ? ym.slice(5)+'-'+ym.slice(0,4) : '';
+function isDateS(d){ return /^\d{4}-\d{2}-\d{2}$/.test(d||''); }
+function fixYear(y){ y=+y; return y<100 ? (y>40?1900+y:2000+y) : y; }
+function nlToIso(s){ s=String(s||'').trim(); if(!s) return '';
+  if(/^vandaag$/i.test(s)) return todayStr();
+  let m=s.match(/^(\d{1,2})[-\/. ](\d{1,2})[-\/. ](\d{2}|\d{4})$/) || s.match(/^(\d{2})(\d{2})(\d{4}|\d{2})$/); if(!m) return null;
+  const d=+m[1], mo=+m[2], y=fixYear(m[3]); const t=new Date(y,mo-1,d); if(t.getFullYear()!==y||t.getMonth()!==mo-1||t.getDate()!==d) return null;
+  return y+'-'+pad(mo)+'-'+pad(d); }
+function nlToYm(s){ s=String(s||'').trim(); if(!s) return '';
+  let m=s.match(/^(\d{1,2})[-\/. ](\d{2}|\d{4})$/) || s.match(/^(\d{2})(\d{4})$/); if(!m) return null;
+  const mo=+m[1], y=fixYear(m[2]); if(mo<1||mo>12) return null; return y+'-'+pad(mo); }
+function autoMask(el){ const isM=el.classList.contains('mnl'); const raw=el.value; if(/[a-z]/i.test(raw)) return;
+  const ours = isM ? /^\d*$|^\d{2}-\d*$/ : /^\d*$|^\d{2}-\d*$|^\d{2}-\d{2}-\d*$/; if(!ours.test(raw)) return;
+  const dg=raw.replace(/\D/g,'').slice(0,isM?6:8); let out=dg;
+  if(isM){ if(dg.length>2) out=dg.slice(0,2)+'-'+dg.slice(2); }
+  else { if(dg.length>4) out=dg.slice(0,2)+'-'+dg.slice(2,4)+'-'+dg.slice(4); else if(dg.length>2) out=dg.slice(0,2)+'-'+dg.slice(2); }
+  if(out!==raw && !(raw.endsWith('-')&&out===raw.slice(0,-1))) el.value=out; }
+const numIn = v => v==null||v==='' ? '' : String(v).replace('.',',');
+
+/* ============ Typen en vaste lijsten ============ */
+const TYPES = {
+  betaal:{label:'Betaalrekening',rente:true,besch:true},
+  spaar:{label:'Spaarrekening',rente:true,besch:true},
+  deposito:{label:'Deposito',rente:true,besch:false},
+  contant:{label:'Contant geld',rente:false,besch:true},
+  goud:{label:'Goud',waarde:true,besch:false},
+  crypto:{label:'Crypto',waarde:true,besch:false},
+  aandelen:{label:'Aandelen / beleggingen',waarde:true,besch:false},
+  overig:{label:'Overig',rente:true,besch:false}
+};
+const RFREQ = {week:'Wekelijks',maand:'Maandelijks',kwartaal:'Per kwartaal',jaar:'Jaarlijks'};
+const FREQ = {1:'Maandelijks',3:'Per kwartaal',12:'Jaarlijks'};
+const AFS = 'Afschrijving';
+const COLORS = ['#1d5fbf','#93b8ea','#0b2545','#5b8fd9','#c4d8f3','#1a4480','#3d7cc9','#7aa6e0','#27496d','#b0c9ec'];
+
+/* ============ Opslag ============ */
+const KEY = 'huishoudfinancien-v1';
+function emptyState(){
+  return {version:1, settings:{threshold:500, infl:2.5, rend:4, growth:2, box3:0, people:['Persoon 1','Persoon 2'], real:false, noInvCats:[], persons:{}, workCats:['Salaris'], aowLater:3},
+    incCats:['Salaris','Pensioen','AOW','Huur/verhuur','Overig'],
+    expCats:['Wonen','Energie','Boodschappen','Vervoer','Verzekeringen','Zorg','Vrije tijd','Abonnementen','Overig'],
+    subCats:{'Wonen':['Hypotheek','Gemeentelijke belastingen','Onderhoud'],'Energie':['Gas en stroom','Water'],'Boodschappen':['Supermarkt','Overige boodschappen'],
+      'Vervoer':['Brandstof','Onderhoud auto','Openbaar vervoer'],'Verzekeringen':['Auto','Inboedel en opstal','Aansprakelijkheid'],'Zorg':['Zorgverzekering','Eigen risico'],
+      'Vrije tijd':['Uit eten','Vakantie','Hobby'],'Abonnementen':['Telefoon','Streaming']},
+    accounts:[], meas:[], flows:[], interest:[], incPlan:[], recurring:[], expected:[], actuals:[], planned:[], histRend:[], years:{}};
+}
+let S;
+/* ============ Opslag via GitHub ============
+   De gegevens staan versleuteld (AES-GCM, sleutel afgeleid van jullie wachtwoord) als data.json in een PRIVÉ GitHub-repository.
+   Token, gebruikersnaam en repository staan alleen in deze browser (localStorage). */
+const CFG_KEY='hf-github-config', CACHE_KEY='hf-cache';
+let CFG=null, dbState='laden', remoteSha=null, lastJson=null, saveTimer=null, saving=false, dirty=false, CRYPTO=null;
+function normalize(){ S.settings.noInvCats ||= []; S.subCats ||= {}; S.settings.persons ||= {}; S.settings.workCats ||= ['Salaris']; S.settings.aowLater ??= 3; S.planned ||= [];
+  /* Eenmalige omzetting: "Geplande uitgaven" worden investeringen met een datum in de toekomst */
+  if(S.planned.length){ const cy=curY();
+    const cat=['Overig',...S.expCats].find(c=>S.expCats.includes(c)&&!S.settings.noInvCats.includes(c))||S.expCats[0];
+    for(const p of S.planned){ let f=1; for(let y=cy+1;y<=+p.year;y++) f*=1+yp(y).infl/100;
+      S.actuals.push({id:uid(),kind:'uit',cat,sub:'',date:p.year+'-07-01',amount:Math.round(p.amount*f),note:p.name,months:60}); }
+    S.planned=[]; S._migrated=true; }
+}
+
+function load(){ S=emptyState(); S.loading=true; }
+function readCfg(){ try{ return JSON.parse(localStorage.getItem(CFG_KEY)||'null'); }catch(e){ return null; } }
+function writeCfg(c){ try{ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }catch(e){} }
+const b64e=buf=>{ let s=''; const a=new Uint8Array(buf); for(let i=0;i<a.length;i+=0x8000) s+=String.fromCharCode.apply(null,a.subarray(i,i+0x8000)); return btoa(s); };
+const b64d=str=>Uint8Array.from(atob(str),c=>c.charCodeAt(0));
+async function deriveKey(pw,salt){ const base=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:250000,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']); }
+async function encryptState(json){ const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},CRYPTO.key,new TextEncoder().encode(json));
+  return JSON.stringify({app:'huishoudfinancien',v:1,kdf:'PBKDF2-SHA256-250000',salt:b64e(CRYPTO.salt),iv:b64e(iv),data:b64e(ct)}); }
+async function decryptBlob(txt,pw){ const o=JSON.parse(txt); if(!o||o.app!=='huishoudfinancien') throw new Error('format');
+  const salt=b64d(o.salt), key=await deriveKey(pw,salt);
+  let pt; try{ pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(o.iv)},key,b64d(o.data)); }catch(e){ throw new Error('wachtwoord'); }
+  return {json:new TextDecoder().decode(pt), key, salt}; }
+function ghHeaders(){ return {'Authorization':'Bearer '+CFG.token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}; }
+const ghUrl=()=>`https://api.github.com/repos/${encodeURIComponent(CFG.owner)}/${encodeURIComponent(CFG.repo)}/contents/data.json`;
+async function ghGet(){
+  const r=await fetch(ghUrl()+'?t='+Date.now(),{headers:ghHeaders(),cache:'no-store'});
+  if(r.status===404){ const rr=await fetch(`https://api.github.com/repos/${encodeURIComponent(CFG.owner)}/${encodeURIComponent(CFG.repo)}`,{headers:ghHeaders()});
+    if(rr.status===404) throw new Error('repo'); if(rr.status===401) throw new Error('token'); return null; }
+  if(r.status===401) throw new Error('token'); if(r.status===403) throw new Error('rechten'); if(!r.ok) throw new Error('net:'+r.status);
+  const j=await r.json(); let content=j.content;
+  if(!content || j.encoding==='none'){ const b=await fetch(`https://api.github.com/repos/${encodeURIComponent(CFG.owner)}/${encodeURIComponent(CFG.repo)}/git/blobs/${j.sha}`,{headers:ghHeaders()}); if(!b.ok) throw new Error('net:'+b.status); content=(await b.json()).content; }
+  return {sha:j.sha, text:new TextDecoder().decode(b64d(content.replace(/\n/g,'')))}; }
+async function ghPut(text,sha){
+  const body={message:'Gegevens bijgewerkt '+new Date().toLocaleString('nl-NL'),content:b64e(new TextEncoder().encode(text))}; if(sha) body.sha=sha;
+  const r=await fetch(ghUrl(),{method:'PUT',headers:Object.assign({'Content-Type':'application/json'},ghHeaders()),body:JSON.stringify(body)});
+  if(r.status===409||r.status===422) throw new Error('conflict'); if(r.status===401) throw new Error('token'); if(r.status===403||r.status===404) throw new Error('rechten'); if(!r.ok) throw new Error('net:'+r.status);
+  return (await r.json()).content.sha; }
+const errTxt=e=>{ const m=String(e&&e.message||e); return m==='token'?'Het token klopt niet of is verlopen.':m==='repo'?'Die repository bestaat niet, of het token heeft er geen toegang toe.':m==='rechten'?'Het token mag niet schrijven in deze repository. Geef het token de rechten "Contents: Read and write".':m==='wachtwoord'?'Het wachtwoord klopt niet.':m==='format'?'data.json in deze repository is geen bestand van deze app.':m.startsWith('net')||m==='Failed to fetch'?'Geen verbinding met GitHub. Controleer je internet.':m; };
+function cacheLocal(blob){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify({blob,sha:remoteSha})); }catch(e){} }
+function setSync(st,msg){ dbState=st; if(msg!=null) syncMsg=msg; const el=document.getElementById('syncDot'); if(el){ el.className='sync '+st; el.textContent=syncTxt(); } }
+let syncMsg='';
+function syncTxt(){ return {ok:'Opgeslagen in GitHub',bezig:'Opslaan…',laden:'Laden…',fout:'Niet opgeslagen: '+syncMsg,lokaal:'Offline – wijzigingen worden opgeslagen zodra er verbinding is',wacht:'Wijzigingen worden zo opgeslagen…'}[dbState]||''; }
+function busyEditing(){ return !!$('#modalRoot').innerHTML || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)); }
+function save(){
+  try{ syncTotals(); }catch(e){}
+  if(S.loading || !CRYPTO) return;
+  const json=JSON.stringify(S); if(json===lastJson) return;
+  dirty=true; setSync('wacht'); clearTimeout(saveTimer); saveTimer=setTimeout(flush,1200);
+}
+async function flush(){
+  if(saving){ clearTimeout(saveTimer); saveTimer=setTimeout(flush,800); return; }
+  const json=JSON.stringify(S); if(json===lastJson){ dirty=false; setSync('ok'); return; }
+  saving=true; setSync('bezig');
+  try{ const blob=await encryptState(json); remoteSha=await ghPut(blob,remoteSha); lastJson=json; dirty=JSON.stringify(S)!==lastJson; cacheLocal(blob); setSync(dirty?'wacht':'ok'); if(dirty){ saveTimer=setTimeout(flush,800); } }
+  catch(e){ if(String(e.message)==='conflict'){ saving=false; return conflict(); }
+    if(String(e.message).startsWith('net')||e.message==='Failed to fetch'){ setSync('lokaal'); saveTimer=setTimeout(flush,15000); } else setSync('fout',errTxt(e)); }
+  saving=false;
+}
+async function conflict(){
+  let rem; try{ rem=await ghGet(); }catch(e){ setSync('fout',errTxt(e)); return; }
+  $('#modalRoot').innerHTML=`<div class="ov"><div class="modal"><h3>Nieuwere gegevens op een ander apparaat</h3><p class="small">Op een ander apparaat zijn intussen ook wijzigingen opgeslagen. Kies welke versie je wilt houden.</p><div class="actions" style="flex-wrap:wrap"><button class="btn sec" id="cfRemote">Versie van het andere apparaat laden</button><button class="btn" id="cfLocal">Mijn wijzigingen hier bewaren</button></div></div></div>`;
+  $('#cfRemote').onclick=async()=>{ $('#modalRoot').innerHTML=''; try{ const d=await decryptBlob(rem.text,CRYPTO.pw); remoteSha=rem.sha; applyJson(d.json); cacheLocal(rem.text); setSync('ok'); render(); toast('Gegevens van het andere apparaat geladen'); }catch(e){ setSync('fout',errTxt(e)); } };
+  $('#cfLocal').onclick=()=>{ $('#modalRoot').innerHTML=''; remoteSha=rem.sha; lastJson=null; flush(); };
+}
+function applyJson(json){ S=Object.assign(emptyState(),JSON.parse(json)); delete S.loading; normalize(); lastJson=JSON.stringify(S); if(S._migrated){ delete S._migrated; lastJson=null; save(); } }
+async function refreshRemote(){
+  if(!CRYPTO || saving || dirty || busyEditing()) return;
+  try{ const rem=await ghGet(); if(!rem || rem.sha===remoteSha) return;
+    const d=await decryptBlob(rem.text,CRYPTO.pw); remoteSha=rem.sha; applyJson(d.json); cacheLocal(rem.text);
+    const sc=window.scrollY; render(); window.scrollTo(0,sc); toast('Bijgewerkt met wijzigingen van een ander apparaat'); }catch(e){}
+}
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') refreshRemote(); else if(dirty){ clearTimeout(saveTimer); flush(); } });
+setInterval(refreshRemote,60000);
+window.addEventListener('beforeunload',e=>{ if(dirty){ flush(); e.preventDefault(); e.returnValue=''; } });
+
+async function initDb(){
+  CFG=readCfg();
+  if(!CFG||!CFG.owner||!CFG.repo||!CFG.token){ return setupScreen(); }
+  if(!CFG.pw){ return unlockScreen(); }
+  await connect(CFG.pw,false);
+}
+async function connect(pw,isSetup,pw2){
+  setSync('laden');
+  try{
+    const rem=await ghGet();
+    if(!rem){ // nog geen gegevens: nieuw bestand
+      if(!isSetup) throw new Error('Er staan nog geen gegevens in deze repository.');
+      if(pw.length<8) throw new Error('Kies een wachtwoord van minimaal 8 tekens.');
+      if(pw!==pw2) throw new Error('De twee wachtwoorden zijn niet gelijk.');
+      const salt=crypto.getRandomValues(new Uint8Array(16)); CRYPTO={pw,salt,key:await deriveKey(pw,salt)};
+      S=emptyState(); normalize(); const blob=await encryptState(JSON.stringify(S)); remoteSha=await ghPut(blob,null); lastJson=JSON.stringify(S); cacheLocal(blob);
+    } else {
+      const d=await decryptBlob(rem.text,pw); CRYPTO={pw,salt:d.salt,key:d.key}; remoteSha=rem.sha; applyJson(d.json); cacheLocal(rem.text);
+    }
+    if(CFG.remember) { CFG.pw=pw; } else delete CFG.pw; writeCfg(CFG);
+    $('#modalRoot').innerHTML=''; setSync('ok'); render(); return true;
+  }catch(e){
+    // offline: probeer de lokale (versleutelde) kopie
+    if((String(e.message).startsWith('net')||e.message==='Failed to fetch') && !isSetup){
+      try{ const c=JSON.parse(localStorage.getItem(CACHE_KEY)||'null'); if(c){ const d=await decryptBlob(c.blob,pw); CRYPTO={pw,salt:d.salt,key:d.key}; remoteSha=c.sha; applyJson(d.json); $('#modalRoot').innerHTML=''; setSync('lokaal'); render(); toast('Offline: je ziet de laatst opgeslagen gegevens'); return true; } }catch(_){}
+    }
+    const el=document.getElementById('suErr'); if(el) el.textContent=errTxt(e); else { setSync('fout',errTxt(e)); unlockScreen(errTxt(e)); }
+    return false;
+  }
+}
+function setupScreen(){
+  const c=readCfg()||{};
+  $('#modalRoot').innerHTML=`<div class="ov"><form class="modal" id="suForm" novalidate><h3>Koppelen met GitHub</h3>
+    <p class="small">Vul de gegevens in die je bij het instellen hebt gemaakt. Dit hoeft maar één keer per apparaat.</p>
+    <div class="f"><label for="suOwner">GitHub-gebruikersnaam</label><input id="suOwner" autocomplete="username" autocapitalize="off" value="${esc(c.owner||'')}"></div>
+    <div class="f"><label for="suRepo">Naam van de privé repository voor de gegevens</label><input id="suRepo" autocapitalize="off" value="${esc(c.repo||'financien-data')}"></div>
+    <div class="f"><label for="suToken">Token</label><input id="suToken" type="password" autocomplete="off" value="${esc(c.token||'')}" placeholder="github_pat_…"></div>
+    <div class="f"><label for="suPw">Wachtwoord voor het versleutelen</label><input id="suPw" type="password" autocomplete="current-password"><div class="help">Eerste keer? Kies een nieuw wachtwoord van minimaal 8 tekens. Al eerder gekozen? Vul hetzelfde wachtwoord in. <b>Vergeet het niet:</b> zonder wachtwoord zijn de gegevens niet meer te openen.</div></div>
+    <div class="f"><label for="suPw2">Wachtwoord herhalen (alleen de eerste keer nodig)</label><input id="suPw2" type="password" autocomplete="new-password"></div>
+    <div class="f cb"><label><input type="checkbox" id="suRem" checked> Wachtwoord onthouden op dit apparaat</label><div class="help">Uitvinken op een apparaat dat je deelt met anderen; dan vraagt de app het wachtwoord elke keer.</div></div>
+    <div class="err" id="suErr"></div><div class="actions"><button class="btn" type="submit" id="suGo">Koppelen</button></div></form></div>`;
+  $('#suForm').onsubmit=async e=>{ e.preventDefault(); $('#suErr').textContent=''; $('#suGo').disabled=true; $('#suGo').textContent='Bezig…';
+    CFG={owner:$('#suOwner').value.trim().replace(/^@/,''),repo:$('#suRepo').value.trim(),token:$('#suToken').value.trim(),remember:$('#suRem').checked};
+    if(!CFG.owner||!CFG.repo||!CFG.token||!$('#suPw').value){ $('#suErr').textContent='Vul alle velden in.'; $('#suGo').disabled=false; $('#suGo').textContent='Koppelen'; return; }
+    writeCfg(Object.assign({},CFG));
+    const ok=await connect($('#suPw').value,true,$('#suPw2').value);
+    if(!ok){ $('#suGo').disabled=false; $('#suGo').textContent='Koppelen'; } else toast('Gekoppeld met GitHub'); };
+}
+function unlockScreen(msg){
+  $('#modalRoot').innerHTML=`<div class="ov"><form class="modal" id="ulForm" novalidate><h3>Wachtwoord</h3><p class="small">Vul je wachtwoord in om je gegevens te openen.</p>
+    <div class="f"><input id="ulPw" type="password" autocomplete="current-password" aria-label="Wachtwoord"></div>
+    <div class="f cb"><label><input type="checkbox" id="ulRem"> Wachtwoord onthouden op dit apparaat</label></div>
+    <div class="err" id="suErr">${msg?esc(msg):''}</div><div class="actions"><button type="button" class="btn sec" id="ulReset">Koppeling wijzigen</button><button class="btn" type="submit">Openen</button></div></form></div>`;
+  setTimeout(()=>$('#ulPw').focus(),30);
+  $('#ulReset').onclick=setupScreen;
+  $('#ulForm').onsubmit=async e=>{ e.preventDefault(); CFG.remember=$('#ulRem').checked; await connect($('#ulPw').value,false); };
+}
+function unlinkDevice(){ confirmBox('De koppeling met GitHub wordt van <b>dit apparaat</b> verwijderd (token en wachtwoord). Je gegevens in GitHub blijven bestaan.',()=>{ try{ localStorage.removeItem(CFG_KEY); localStorage.removeItem(CACHE_KEY); }catch(e){} location.reload(); },'Koppeling verwijderen'); }
+const UNDIST='Niet verdeeld';
+/* Maandtotaal uitgaven: het deel dat niet over categorieën is verdeeld, wordt bewaard als categorie "Niet verdeeld" */
+function syncTotals(){ for(const t of S.actuals){ if(t.monthTotal==null) continue; const ym=t.date.slice(0,7);
+  const others=sum(S.actuals.filter(a=>a!==t&&a.kind==='uit'&&!isInv(a)&&a.date.slice(0,7)===ym).map(a=>+a.amount)); t.amount=Math.max(0,t.monthTotal-others); } }
+const monthTotalRec = ym => S.actuals.find(a=>a.monthTotal!=null&&a.date.slice(0,7)===ym);
+function setMonthTotal(ym,v){ const r=monthTotalRec(ym);
+  if(v==null||isNaN(v)){ if(r) S.actuals=S.actuals.filter(x=>x!==r); return; }
+  if(r) r.monthTotal=v; else S.actuals.push({id:uid(),kind:'uit',cat:UNDIST,sub:'',date:lastDay(ym),amount:0,monthTotal:v,grid:true,note:'Rest van het maandtotaal'}); syncTotals(); }
+
+/* ============ Voorbeeldgegevens (verzonnen) ============ */
+function demoState(){
+  const s=emptyState(); s.demo=true; s.settings.noInvCats=['Wonen','Boodschappen'];
+  let seed=7; const rnd=()=>{seed=(seed*16807)%2147483647;return (seed-1)/2147483646;};
+  const A=(name,type,extra)=>{const a=Object.assign({id:uid(),name,type,rente:0,renteFreq:'maand',renteDag:'',besch:!!TYPES[type].besch,start:''},extra);s.accounts.push(a);return a;};
+  const bet=A('Gezamenlijke betaalrekening','betaal',{rente:0});
+  const spa=A('Spaarrekening','spaar',{rente:2.1,renteFreq:'maand',renteDag:iYm(ymI(curYm())+1)+'-01',inleg:400});
+  const dep=A('Deposito 3 jaar','deposito',{rente:3.2,renteFreq:'jaar',renteDag:(curY()+1)+'-03-15'});
+  const gou=A('Goud (munten)','goud');
+  const cry=A('Crypto','crypto');
+  const con=A('Contant geld','contant');
+  const c=ymI(curYm());
+  let vb=4200, vs=28000, vg=6100, vc=3500;
+  for(let i=c-20;i<=c;i++){
+    const ym=iYm(i);
+    vb=Math.max(800, vb+(rnd()-.45)*900); vs+=350+rnd()*250; vg*=1+(rnd()-.4)*0.05; vc*=1+(rnd()-.45)*0.16;
+    const d=ym+'-'+pad(Math.min(28,3+Math.floor(rnd()*20)));
+    if(i<c || +todayStr().slice(8)>3){
+      s.meas.push({id:uid(),acc:bet.id,date:d,value:Math.round(vb),at:i});
+      if(i!==c-6) s.meas.push({id:uid(),acc:spa.id,date:d,value:Math.round(vs),at:i});
+      if(i%3===0) s.meas.push({id:uid(),acc:gou.id,date:d,value:Math.round(vg),at:i});
+      if(i%2===0) s.meas.push({id:uid(),acc:cry.id,date:d,value:Math.round(vc),at:i});
+    }
+    if(i===c-20||i===c-8) s.meas.push({id:uid(),acc:dep.id,date:ym+'-15',value:i===c-20?20000:20640,at:i});
+    if(i===c-12) s.flows.push({id:uid(),acc:gou.id,date:ym+'-10',amount:1200,note:'Twee munten gekocht'});
+  }
+  s.meas.push({id:uid(),acc:con.id,date:iYm(c-2)+'-05',value:350,at:0});
+  spa.rates=[{id:uid(),from:iYm(c-5)+'-01',pct:1.9}];
+  for(let m=1;m<=12;m++) s.interest.push({id:uid(),acc:spa.id,date:(curY()-1)+'-'+pad(m)+'-01',amount:Math.round(38+m*1.1),note:'Rente-uitkering'});
+  const sY=iYm(c-24);
+  const R=(kind,name,cat,amount,freq,extra)=>s.recurring.push(Object.assign({id:uid(),kind,name,cat,amount,freq,start:sY,end:'',day:'25',person:''},extra));
+  R('in','Netto salaris A','Salaris',3150,1,{person:s.settings.people[0],end:(curY()+9)+'-02'});
+  R('in','Netto salaris B','Salaris',2380,1,{person:s.settings.people[1],day:'23'});
+  R('in','Pensioen A','Pensioen',2250,1,{person:s.settings.people[0],start:(curY()+9)+'-03'});
+  R('in','AOW A','AOW',1050,1,{person:s.settings.people[0],start:(curY()+11)+'-06'});
+  R('uit','Hypotheek','Wonen',1340,1,{day:'1'});
+  R('uit','Energie','Energie',185,1,{day:'5'});
+  R('uit','Autoverzekering','Verzekeringen',240,3,{day:'1'});
+  R('uit','Zorgverzekering','Zorg',290,1,{day:'1'});
+  R('uit','Streaming en telefoon','Abonnementen',68,1,{day:'12',end:iYm(c+5)});
+  R('uit','Boodschappen','Boodschappen',720,1,{day:''});
+  R('uit','Brandstof','Vervoer',190,1,{day:''});
+  for(let i=ymI('2025-01');i<c;i++){
+    const ym=iYm(i);
+    const add=(cat,amt,sub)=>s.actuals.push({id:uid(),kind:'uit',cat,sub:sub||'',date:lastDay(ym),amount:Math.round(amt),note:sub||'Maandtotaal',grid:true});
+    add('Wonen',1340,'Hypotheek'); if(i%12===1) add('Wonen',890,'Gemeentelijke belastingen'); if(rnd()<.25) add('Wonen',80+rnd()*300,'Onderhoud');
+    add('Energie',150+rnd()*90); add('Boodschappen',560+rnd()*160,'Supermarkt'); add('Boodschappen',60+rnd()*60,'Overige boodschappen');
+    add('Vervoer',130+rnd()*90,'Brandstof'); if(rnd()<.2) add('Vervoer',150+rnd()*350,'Onderhoud auto');
+    add('Zorg',290); add('Vrije tijd',100+rnd()*200,'Uit eten'); if(i%12===6) add('Vrije tijd',1800,'Vakantie'); add('Abonnementen',68); if(i%3===0) add('Verzekeringen',240,'Auto'); add('Overig',60+rnd()*160);
+    const inc=(cat,sub,amt)=>s.actuals.push({id:uid(),kind:'in',cat,sub,date:lastDay(ym),amount:amt,note:sub,grid:true});
+    inc('Salaris',s.settings.people[0],i%12===4?3150+2900:3150); inc('Salaris',s.settings.people[1],i%12===4?2380+2200:2380);
+  }
+  s.actuals.push({id:uid(),kind:'uit',cat:'Overig',date:iYm(c-7)+'-14',amount:749,note:'Wasmachine',months:36});
+  s.actuals.push({id:uid(),kind:'uit',cat:'Vervoer',date:iYm(c-30)+'-02',amount:14500,note:'Tweedehands auto',months:84});
+  s.actuals.push({id:uid(),kind:'uit',cat:'Vrije tijd',date:iYm(c-3)+'-20',amount:620,note:'Vakantiehuisje (geen investering)',regular:true});
+  s.expected.push({id:uid(),kind:'uit',cat:'Vrije tijd',ym:iYm(c+1),amount:1200,note:'Wintersport'});
+  s.planned.push({id:uid(),name:'Nieuwe auto',year:curY()+5,amount:24000});
+  s.planned.push({id:uid(),name:'Dak vervangen',year:curY()+9,amount:15000});
+  s.planned.push({id:uid(),name:'Keuken',year:curY()+14,amount:18000});
+  s.histRend.push({id:uid(),year:curY()-3,acc:'',pct:3.1});
+  return s;
+}
+
+/* ============ Berekeningen ============ */
+const accById = id => S.accounts.find(a=>a.id===id);
+function measOf(accId){
+  return S.meas.filter(m=>m.acc===accId).sort((a,b)=> a.date<b.date?-1:a.date>b.date?1:(a.at||0)-(b.at||0));
+}
+function valueAt(accId, dateStr){ let r=null; for(const m of measOf(accId)){ if(m.date<=dateStr) r=m; else break; } return r; }
+function currentOf(accId){ const ms=measOf(accId); return ms[ms.length-1]||null; }
+function rateAt(acc,date){ let r=+acc.rente||0; for(const x of (acc.rates||[]).slice().sort((a,b)=>a.from<b.from?-1:1)) if(x.from<=date) r=+x.pct; return r; }
+const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d||'');
+function payoutLabel(a){
+  const d=a.renteDag; if(!d) return ''; if(!isDate(d)) return d;
+  const day=+d.slice(8), dm=new Date(d+'T12:00').toLocaleDateString('nl-NL',{day:'numeric',month:'long'});
+  return {week:'vanaf '+dNl(d), maand:'elke '+day+'e van de maand', kwartaal:'elk kwartaal, vanaf '+dNl(d), jaar:'jaarlijks op '+dm}[a.renteFreq]||dNl(d);
+}
+const hasRate = acc => TYPES[acc.type].rente && ((+acc.rente||0)>0 || (acc.rates||[]).length>0);
+function addDays(d,n){ const t=new Date(d+'T12:00'); t.setDate(t.getDate()+n); return t.getFullYear()+'-'+pad(t.getMonth()+1)+'-'+pad(t.getDate()); }
+function daysBetween(a,b){ return Math.round((new Date(b+'T12:00')-new Date(a+'T12:00'))/864e5); }
+/* Rente over [from,to): elk saldo geldt tot de volgende meting, elk percentage tot de volgende wijziging */
+function interestCalc(acc,from,to){
+  const pts=new Set([from]);
+  for(const m of measOf(acc.id)) if(m.date>from&&m.date<to) pts.add(m.date);
+  for(const r of (acc.rates||[])) if(r.from>from&&r.from<to) pts.add(r.from);
+  const arr=[...pts].sort(); arr.push(to);
+  let eur=0,w=0,days=0;
+  for(let i=0;i<arr.length-1;i++){ const bal=valueAt(acc.id,arr[i]); if(!bal) continue; const d=daysBetween(arr[i],arr[i+1]); eur+=bal.value*rateAt(acc,arr[i])/100*d/365; w+=bal.value*d; days+=d; }
+  return {eur, avg:days?w/days:null, days};
+}
+function savingsForecast(acc,months=24){
+  const cur=currentOf(acc.id); if(!cur) return null;
+  const per={week:1,maand:1,kwartaal:3,jaar:12}[acc.renteFreq]||1;
+  let bal=cur.value, accrued=0, int12=0; const c=ymI(curYm()), rows=[];
+  for(let k=1;k<=months;k++){
+    const i=c+k, ym=iYm(i), r=rateAt(acc,ym+'-01'), it=bal*r/100/12; accrued+=it; if(k<=12) int12+=it;
+    const m=i%12+1, m0=isDate(acc.renteDag)?+acc.renteDag.slice(5,7):12; if(per===1||(per===3&&(m-m0+12)%3===0)||(per===12&&m===m0)){ bal+=accrued; accrued=0; }
+    bal+=(+acc.inleg||0); rows.push({ym,bal,it,r});
+  }
+  return {rows,int12,start:cur};
+}
+function monthStatus(ym){
+  const end=lastDay(ym); let total=0, besch=0, known=0; const missing=[], stale=[];
+  for(const a of S.accounts){
+    if(a.start && a.start.slice(0,7)>ym) continue;
+    const m=valueAt(a.id,end);
+    if(!m){ missing.push(a.name); continue; }
+    known++; if(m.date.slice(0,7)<ym) stale.push({name:a.name,date:m.date});
+    total+=m.value; if(a.besch) besch+=m.value;
+  }
+  return {total,besch,missing,stale,known};
+}
+function dueIn(r, ym){
+  const i=ymI(ym), s=ymI(r.start); if(i<s) return false;
+  if(r.end && i>ymI(r.end)) return false;
+  return (i-s)%(+r.freq||1)===0;
+}
+const noInv = cat => (S.settings.noInvCats||[]).includes(cat);
+const isInv = a => a.kind==='uit' && !a.grid && a.amount > S.settings.threshold && !a.regular && !noInv(a.cat);
+function deprIn(a, ym){
+  if(!isInv(a)) return 0; const s=ymI(a.date.slice(0,7)), n=Math.max(1,+a.months||1), i=ymI(ym);
+  return (i>=s && i<s+n) ? a.amount/n : 0;
+}
+function monthOverview(ym){
+  const res={in:{},uit:{},sub:{}};
+  const add=(k,c,f,v)=>{ const o=(res[k][c] ||= {exp:0,act:0,hasAct:false}); o[f]+=v; if(f==='act') o.hasAct=true; };
+  for(const r of S.recurring) if(r.kind==='uit' && dueIn(r,ym)) add('uit',r.cat,'exp',+r.amount);
+  for(const e of S.expected) if(e.kind==='uit' && e.ym===ym) add('uit',e.cat,'exp',+e.amount);
+  for(const [c,o] of Object.entries(expIncome(ym))) add('in',c,'exp',sum(Object.values(o)));
+  for(const a of S.actuals) if(a.date.slice(0,7)===ym && !isInv(a)){ add(a.kind,a.cat,'act',+a.amount); if(a.sub){ const o=(res.sub[a.kind+'|'+a.cat] ||= {}); o[a.sub]=(o[a.sub]||0)+ +a.amount; } }
+  const dep=sum(S.actuals.map(a=>deprIn(a,ym)));
+  if(dep>0){ add('uit',AFS,'exp',dep); add('uit',AFS,'act',dep); }
+  const tot=k=>{ let exp=0,act=0,geld=0; for(const c in res[k]){ const o=res[k][c]; exp+=o.exp; act+=o.act; geld+= o.hasAct?o.act:o.exp; } return {exp,act,geld}; };
+  res.tIn=tot('in'); res.tUit=tot('uit');
+  return res;
+}
+function yp(y){ const o=S.years[y]||{}; const st=S.settings; return {infl:o.infl??st.infl, rend:o.rend??st.rend, growth:o.growth??st.growth}; }
+function expenseBase(){
+  const c=ymI(curYm()); const months=[]; for(let i=c-24;i<c;i++) months.push(iYm(i));
+  const withData=months.filter(ym=>S.actuals.some(a=>a.kind==='uit' && a.date.slice(0,7)===ym));
+  const cats={};
+  if(withData.length){
+    for(const a of S.actuals){ if(a.kind!=='uit'||isInv(a)) continue; if(!withData.includes(a.date.slice(0,7))) continue; cats[a.cat]=(cats[a.cat]||0)+ +a.amount; }
+    for(const k in cats) cats[k]/=withData.length;
+    return {cats, n:withData.length, source:'werkelijk'};
+  }
+  for(const r of S.recurring){ if(r.kind!=='uit' || !dueActiveNow(r)) continue; cats[r.cat]=(cats[r.cat]||0)+ r.amount/(+r.freq||1); }
+  return {cats, n:0, source:'verwacht'};
+}
+function dueActiveNow(r){ const i=ymI(curYm()); return ymI(r.start)<=i && (!r.end || ymI(r.end)>=i); }
+function prognosis(){
+  const cy=curY(); const st=monthStatus(curYm()); const base=expenseBase(); const baseM=sum(Object.values(base.cats));
+  let v=st.total, infF=1, groF=1; const rows=[];
+  /* Rest van het lopende jaar: volgende maand t/m december, plus losse uitgaven met een datum na vandaag in dit jaar */
+  const cm=+curYm().slice(5,7), restM=12-cm; let rInc=0;
+  for(let m=cm+1;m<=12;m++) for(const o of Object.values(expIncome(cy+'-'+pad(m)))) for(const x of Object.values(o)) rInc+=x;
+  const rOne=sum(S.actuals.filter(a=>a.kind==='uit'&&!a.grid&&a.monthTotal==null&&a.date>todayStr()&&a.date.slice(0,4)===String(cy)).map(a=>+a.amount))
+    + sum(S.expected.filter(e=>e.kind==='uit'&&e.ym>curYm()&&e.ym.slice(0,4)===String(cy)).map(e=>+e.amount));
+  const rExp=baseM*restM+rOne, rRet=v*(yp(cy).rend-S.settings.box3)/100*restM/12;
+  const rest={months:restM,begin:v,inc:rInc,exp:rExp,oneOff:rOne,ret:rRet,end:v+rRet+rInc-rExp};
+  v=rest.end;
+  for(let y=cy+1;y<=cy+30;y++){
+    const p=yp(y); infF*=1+p.infl/100; groF*=1+p.growth/100;
+    const incByCat={}, incByPerson={}, incByPC={}, decPC={}; let inc=0;
+    for(let m=1;m<=12;m++){ for(const [c,o] of Object.entries(expIncome(y+'-'+pad(m)))) for(const [sb,v] of Object.entries(o)){
+      const amt=v*groF; inc+=amt; incByCat[c]=(incByCat[c]||0)+amt; const pp=sb||'Samen (categorietotaal)'; incByPerson[pp]=(incByPerson[pp]||0)+amt; incByPC[pp+'|'+c]=(incByPC[pp+'|'+c]||0)+amt; if(m===12) decPC[pp+'|'+c]=(decPC[pp+'|'+c]||0)+amt; } }
+    const inY=d=> d.slice(0,4)===String(y) && d>todayStr();
+    const oneOff=sum(S.actuals.filter(a=>a.kind==='uit' && !a.grid && a.monthTotal==null && inY(a.date)).map(a=>+a.amount))
+      + sum(S.expected.filter(e=>e.kind==='uit' && inY(lastDay(e.ym))).map(e=>+e.amount));
+    const plan=sum(S.planned.filter(x=>+x.year===y).map(x=>x.amount))*infF + oneOff;
+    const exp=baseM*12*infF+plan;
+    const begin=v; const ret=begin*(p.rend-S.settings.box3)/100;
+    v=begin+ret+inc-exp;
+    rows.push({y,begin,inc,exp,plan,ret,end:v,infF,incByCat,incByPerson,incByPC,decPC,p});
+  }
+  return {rows,start:st,base,baseM,rest};
+}
+function yearRend(acc, y){
+  const ov=S.histRend.find(h=>+h.year===+y && h.acc===acc.id);
+  if(ov) return {pct:ov.pct/100, eur:null, base:null, manual:true};
+  const t=TYPES[acc.type]; const ms=measOf(acc.id);
+  const prevEnd=valueAt(acc.id,(y-1)+'-12-31'); const inYear=ms.filter(m=>m.date.slice(0,4)==String(y));
+  const startM=prevEnd||inYear[0]; if(!startM) return null;
+  if(t.waarde){
+    const endM=valueAt(acc.id,y+'-12-31'); if(!endM||endM===startM) return null;
+    const fl=sum(S.flows.filter(f=>f.acc===acc.id && f.date>startM.date && f.date<=endM.date).map(f=>f.amount));
+    const e=endM.value-startM.value-fl; const basis=startM.value+Math.max(0,fl);
+    return {eur:e, pct:basis>0?e/basis:null, base:basis, partial:endM.date.slice(0,4)==String(curY()) && y==curY(), from:startM.date, to:endM.date};
+  }
+  if(!hasRate(acc)) return null;
+  let from=y+'-01-01'; const firstM=ms[0]; if(firstM.date>from) from=firstM.date; if(acc.start&&acc.start>from) from=acc.start;
+  const to=(y+1)+'-01-01'; if(from>=to) return null;
+  const ic=interestCalc(acc,from,to); if(!ic.avg) return null;
+  const rec=S.interest.filter(x=>x.acc===acc.id&&x.date.slice(0,4)==String(y));
+  if(rec.length){ const e=sum(rec.map(x=>x.amount)); const cur=y==curY();
+    const el=cur?Math.max(1,daysBetween(from,todayStr())):ic.days;
+    return {eur:e, pct:e/(ic.avg*el/365), base:ic.avg, received:true, partial:cur}; }
+  return {eur:ic.eur, pct:ic.eur/(ic.avg*ic.days/365), base:ic.avg*ic.days/365, expected:y>=curY(), calc:true};
+}
+function totalRend(y){
+  const ov=S.histRend.find(h=>+h.year===+y && !h.acc); if(ov) return {pct:ov.pct/100, eur:null, manual:true};
+  let e=0,b=0,any=false;
+  for(const a of S.accounts){ const r=yearRend(a,y); if(r && r.eur!=null && r.base){ e+=r.eur; b+=r.base; any=true; } }
+  return any?{eur:e,pct:b?e/b:null}:null;
+}
+function calendarEvents(){
+  const c=ymI(curYm()), until=c+12, ev=[];
+  for(const r of S.recurring){
+    const s=ymI(r.start);
+    if(s>c && s<=until) ev.push({ym:r.start, txt:`${r.kind==='in'?'Start inkomst':'Start vaste last'}: ${r.name}`, amt:r.amount, kind:r.kind, badge:'nieuw'});
+    if(r.end){ const e=ymI(r.end); if(e>=c && e<=until) ev.push({ym:r.end, txt:`Laatste termijn: ${r.name}`, amt:r.amount, kind:r.kind, badge:'loopt af'}); }
+  }
+  for(const a of S.actuals){ if(!isInv(a)) continue; const e=ymI(a.date.slice(0,7))+(+a.months||1)-1; if(e>=c&&e<=until) ev.push({ym:iYm(e), txt:`Afschrijving klaar: ${a.note||a.cat}`, amt:a.amount/(+a.months||1), kind:'uit', badge:'afschrijving'}); }
+  for(const e of S.expected){ const i=ymI(e.ym); if(i>=c&&i<=until) ev.push({ym:e.ym, txt:`Verwacht: ${e.note||e.cat}`, amt:e.amount, kind:e.kind, badge:'incidenteel'}); }
+  const cy=curY(); for(const p of S.planned){ if(+p.year===cy||+p.year===cy+1) ev.push({ym:p.year+'-01', txt:`Geplande uitgave ${p.year}: ${p.name}`, amt:p.amount, kind:'uit', badge:'gepland', yearOnly:true}); }
+  return ev.sort((a,b)=>a.ym<b.ym?-1:1);
+}
+
+/* ============ Grafieken (SVG) ============ */
+function niceTicks(min,max,n=4){
+  if(min===max){max=min+1;} const span=max-min, step0=span/n, mag=Math.pow(10,Math.floor(Math.log10(step0)));
+  const step=[1,2,2.5,5,10].map(x=>x*mag).find(x=>x>=step0)||mag*10;
+  const lo=Math.floor(min/step)*step, hi=Math.ceil(max/step)*step; const t=[]; for(let v=lo;v<=hi+step/2;v+=step) t.push(+v.toFixed(6)); return t;
+}
+function lineChart({labels,series,h=250,hollow=[]}){
+  const W=760,H=h,pl=70,pr=14,pt=14,pb=30;
+  const vals=series.flatMap(s=>s.values).filter(v=>v!=null);
+  if(!vals.length) return '<p class="muted">Nog geen gegevens om te tonen.</p>';
+  const ticks=niceTicks(Math.min(0,...vals),Math.max(...vals)); const lo=ticks[0],hi=ticks[ticks.length-1];
+  const n=labels.length, x=i=>pl+(n<2?(W-pl-pr)/2:i*(W-pl-pr)/(n-1)), y=v=>pt+(H-pt-pb)*(1-(v-lo)/(hi-lo||1));
+  let g='';
+  for(const t of ticks) g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(t)}" y2="${y(t)}" stroke="${t===0?'#b8c7dc':'#e6edf6'}"/><text x="${pl-8}" y="${y(t)+4}" text-anchor="end" font-size="11" fill="#5a6b85">${esc(eurC.format(t))}</text>`;
+  const every=Math.ceil(n/12);
+  labels.forEach((l,i)=>{ if(i%every===0||(i===n-1&&(n-1)%every>=every/2+0.5)||every===1) g+=`<text x="${x(i)}" y="${H-10}" text-anchor="middle" font-size="11" fill="#5a6b85">${esc(l)}</text>`; });
+  for(const s of series){
+    let d='',pen=false; s.values.forEach((v,i)=>{ if(v==null){pen=false;return;} d+=(pen?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1)+' '; pen=true; });
+    g+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.width||2.5}" ${s.dash?'stroke-dasharray="5 4"':''} stroke-linejoin="round" stroke-linecap="round"/>`;
+    if(n<=60) s.values.forEach((v,i)=>{ if(v==null) return; const ho=hollow.includes(i)&&s.markHollow;
+      g+=`<circle cx="${x(i)}" cy="${y(v)}" r="${ho?4:3}" fill="${ho?'#fff':s.color}" stroke="${s.color}" stroke-width="2"><title>${esc(s.name)} · ${esc(labels[i])}: ${esc(E(v))}${ho?' (onvolledig)':''}</title></circle>`; });
+  }
+  const leg=series.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img">${g}</svg></div><div class="legend">${leg}</div>`;
+}
+/* Lijn (linker as) met staven (rechter as). De rechter as wordt zo geschaald dat de staven waar mogelijk onder de lijn blijven. */
+function comboChart({labels,line,bars,h=300}){
+  const W=760,H=h,pl=70,pr=70,pt=14,pb=30, n=labels.length;
+  const lv=line.values.filter(v=>v!=null), bv=bars.flatMap(b=>b.values).filter(v=>v!=null&&v>0);
+  if(!lv.length) return '<p class="muted">Nog geen gegevens om te tonen.</p>';
+  const ticks=niceTicks(Math.min(0,...lv),Math.max(...lv)), lo=ticks[0], hi=ticks[ticks.length-1];
+  const y=v=>pt+(H-pt-pb)*(1-(v-lo)/(hi-lo||1));
+  const maxB=Math.max(1,...bv);
+  // schaal k: staafwaarde v wordt getekend op hoogte v*k (in eenheden van de linker as), zo hoog mogelijk maar net onder de lijn
+  const ks=[]; line.values.forEach((L,i)=>{ const b=Math.max(0,...bars.map(s=>s.values[i]||0)); if(L!=null&&L>0&&b>0) ks.push(0.96*L/b); });
+  ks.sort((a,b)=>a-b);
+  let sc=ks.length? ks[0] : hi/maxB*0.6; // in elk jaar onder de lijn
+  sc=Math.min(sc, 0.98*hi/maxB);
+  const yb=v=>y(v*sc), rTicks=(()=>{ for(const nn of [4,3,2,1]){ const t=niceTicks(0,maxB,nn).filter(t=>t*sc<=hi*1.001); if(t.length<2||Math.abs(y(t[1]*sc)-y(0))>=16) return t; } return [0]; })();
+  const band=(W-pl-pr)/n, x=i=>pl+band*(i+.5); let g='';
+  for(const t of ticks){ g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(t)}" y2="${y(t)}" stroke="${t===0?'#b8c7dc':'#e6edf6'}"/><text x="${pl-8}" y="${y(t)+4}" text-anchor="end" font-size="11" fill="#5a6b85">${esc(eurC.format(t))}</text>`;
+  }
+  for(const t of rTicks) g+=`<line x1="${W-pr}" x2="${W-pr+4}" y1="${yb(t)}" y2="${yb(t)}" stroke="#c9a07f"/><text x="${W-pr+8}" y="${yb(t)+4}" text-anchor="start" font-size="11" fill="#9a5a2e">${esc(eurC.format(t))}</text>`;
+  const k=bars.length, gap=2, bw=Math.min(14,(band*.8-gap*(k-1))/k), tw=k*bw+(k-1)*gap;
+  labels.forEach((l,i)=>{ bars.forEach((s,j)=>{ const v=s.values[i]||0; if(v<=0) return; const top=yb(v);
+      g+=`<rect x="${x(i)-tw/2+j*(bw+gap)}" y="${top}" width="${bw}" height="${Math.max(0,y(0)-top)}" rx="1.5" fill="${s.color}" opacity=".85"><title>${esc(l)} · ${esc(s.name)}: ${esc(E(v))}</title></rect>`; }); });
+  const every=Math.ceil(n/15);
+  labels.forEach((l,i)=>{ if(i%every===0||every===1) g+=`<text x="${x(i)}" y="${H-10}" text-anchor="middle" font-size="11" fill="#5a6b85">${esc(l)}</text>`; });
+  let d='',pen=false; line.values.forEach((v,i)=>{ if(v==null){pen=false;return;} d+=(pen?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1)+' '; pen=true; });
+  g+=`<path d="${d}" fill="none" stroke="${line.color}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
+  if(n<=60) line.values.forEach((v,i)=>{ if(v!=null) g+=`<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="${line.color}"><title>${esc(line.name)} · ${esc(labels[i])}: ${esc(E(v))}</title></circle>`; });
+  g+=`<text x="${pl}" y="${pt-2}" font-size="10.5" fill="#5a6b85">vermogen</text><text x="${W-pr}" y="${pt-2}" text-anchor="end" font-size="10.5" fill="#9a5a2e">per jaar</text>`;
+  const leg=[`<span><i style="background:${line.color}"></i>${esc(line.name)} (linker as)</span>`,...bars.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.name)} (rechter as)</span>`)].join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H+4}" role="img" style="overflow:visible">${g}</svg></div><div class="legend">${leg}</div>`;
+}
+function barChart({labels,series,h=250,stacked=false}){
+  const W=760,H=h,pl=70,pr=14,pt=14,pb=30; const n=labels.length;
+  if(!n||!series.length) return '<p class="muted">Nog geen gegevens om te tonen.</p>';
+  const totals=labels.map((_,i)=>stacked?sum(series.map(s=>s.values[i]||0)):Math.max(0,...series.map(s=>s.values[i]||0)));
+  const ticks=niceTicks(0,Math.max(1,...totals)); const hi=ticks[ticks.length-1];
+  const y=v=>pt+(H-pt-pb)*(1-v/hi); const band=(W-pl-pr)/n; let g='';
+  for(const t of ticks) g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(t)}" y2="${y(t)}" stroke="${t===0?'#b8c7dc':'#e6edf6'}"/><text x="${pl-8}" y="${y(t)+4}" text-anchor="end" font-size="11" fill="#5a6b85">${esc(eurC.format(t))}</text>`;
+  const every=Math.ceil(n/15);
+  labels.forEach((l,i)=>{
+    const showLbl = i%every===0 || (i===n-1 && (n-1)%every >= every/2+0.5) || every===1;
+    const x0=pl+i*band;
+    if(stacked){ let acc=0; const bw=Math.min(34,band*.7);
+      series.forEach(s=>{ const v=s.values[i]||0; if(v<=0) return; g+=`<rect x="${x0+(band-bw)/2}" y="${y(acc+v)}" width="${bw}" height="${Math.max(0,y(acc)-y(acc+v))}" fill="${s.color}" ${acc>0?'':'rx="2"'}><title>${esc(l)} · ${esc(s.name)}: ${esc(E(v))}</title></rect>`; acc+=v; });
+    } else { const k=series.length, gap=2, bw=Math.min(18,(band*.75-gap*(k-1))/k), tw=k*bw+(k-1)*gap;
+      series.forEach((s,j)=>{ const v=s.values[i]||0; g+=`<rect x="${x0+(band-tw)/2+j*(bw+gap)}" y="${y(v)}" width="${bw}" height="${Math.max(0,y(0)-y(v))}" rx="2" fill="${s.color}"><title>${esc(l)} · ${esc(s.name)}: ${esc(E(v))}</title></rect>`; });
+    }
+    if(showLbl) g+=`<text x="${x0+band/2}" y="${H-10}" text-anchor="middle" font-size="11" fill="#5a6b85">${esc(l)}</text>`;
+  });
+  const leg=series.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img">${g}</svg></div><div class="legend">${leg}</div>`;
+}
+
+/* ============ Formulieren en dialogen ============ */
+function closeModal(){ if(!CRYPTO && document.getElementById('suForm')) return; if(!CRYPTO && document.getElementById('ulForm')) return; $('#modalRoot').innerHTML=''; }
+function form({title,fields,values={},onSave,saveLabel='Opslaan',extra=''}){
+  const v=Object.assign({},values);
+  const fieldHtml=f=>{
+    const id='f_'+f.k, val=v[f.k];
+    if(f.type==='cb') return `<div class="f cb" data-k="${f.k}"><label><input type="checkbox" id="${id}" ${val?'checked':''}> ${esc(f.label)}</label>${f.help?`<div class="help">${esc(f.help)}</div>`:''}</div>`;
+    let inp;
+    if(f.type==='select') inp=`<select id="${id}">${f.options.map(o=>{const [ov,ol]=Array.isArray(o)?o:[o,o];return `<option value="${esc(ov)}" ${String(ov)===String(val??'')?'selected':''}>${esc(ol)}</option>`;}).join('')}</select>`;
+    else if(f.type==='textarea') inp=`<textarea id="${id}" rows="${f.rows||4}">${esc(val??'')}</textarea>`;
+    else if(f.type==='num') inp=`<input id="${id}" inputmode="decimal" autocomplete="off" value="${esc(numIn(val))}" placeholder="${esc(f.ph||'')}">`;
+    else if(f.type==='date') inp=`<input id="${id}" class="dnl" inputmode="numeric" autocomplete="off" value="${esc(isoToNl(val))}" placeholder="dd-mm-jjjj">`;
+    else if(f.type==='month') inp=`<input id="${id}" class="mnl" inputmode="numeric" autocomplete="off" value="${esc(ymToNl(val))}" placeholder="mm-jjjj">`;
+    else inp=`<input id="${id}" type="${f.type||'text'}" value="${esc(val??'')}" placeholder="${esc(f.ph||'')}">`;
+    return `<div class="f" data-k="${f.k}"><label for="${id}">${esc(f.label)}${f.req?' *':''}</label>${inp}${f.help?`<div class="help">${f.help}</div>`:''}</div>`;
+  };
+  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><form class="modal" id="mform" novalidate><h3>${esc(title)}</h3>${extra}${fields.map(fieldHtml).join('')}<div class="err" id="ferr"></div><div class="actions"><button type="button" class="btn sec" id="fcancel">Annuleren</button><button class="btn" type="submit">${esc(saveLabel)}</button></div></form></div>`;
+  const read=()=>{ const o={}; for(const f of fields){ const el=$('#f_'+f.k); if(!el) continue; o[f.k]= f.type==='cb'?el.checked : f.type==='num'? parseNum(el.value) : f.type==='date'? (nlToIso(el.value) ?? '#ongeldig') : f.type==='month'? (nlToYm(el.value) ?? '#ongeldig') : el.value.trim(); } return o; };
+  const refresh=()=>{ const cur=read(); for(const f of fields){ if(!f.show) continue; const box=document.querySelector(`.f[data-k="${f.k}"]`); if(box) box.style.display=f.show(cur)?'':'none'; } };
+  $('#mform').addEventListener('input',refresh); $('#mform').addEventListener('change',refresh); refresh();
+  $('#fcancel').onclick=closeModal; $('#ov').addEventListener('mousedown',e=>{ if(e.target.id==='ov') closeModal(); });
+  $('#mform').onsubmit=e=>{ e.preventDefault(); const o=read();
+    for(const f of fields){ if(f.show && !f.show(o)) { delete o[f.k]; continue; }
+      if(o[f.k]==='#ongeldig'){ $('#ferr').textContent=`"${f.label}" is geen geldige ${f.type==='month'?'maand (mm-jjjj)':'datum (dd-mm-jjjj)'}.`; $('#f_'+f.k).focus(); return; }
+      if(f.req && (o[f.k]===''||o[f.k]==null||(f.type==='num'&&isNaN(o[f.k])))){ $('#ferr').textContent=`Vul "${f.label}" in.`; return; }
+      if(f.type==='num' && o[f.k]!=='' && o[f.k]!=null && isNaN(o[f.k]) ) o[f.k]=null; }
+    const msg=onSave(o); if(typeof msg==='string'){ $('#ferr').textContent=msg; return; }
+    closeModal(); save(); render(); };
+  setTimeout(()=>{ const first=$('#mform input:not([type=checkbox]),#mform select'); first&&first.focus(); },30);
+}
+function restoreFrom(d){ if(!d||!Array.isArray(d.accounts)) throw 0; S=Object.assign(emptyState(),d); delete S.loading; normalize(); delete S._migrated; }
+function pasteModal(){
+  $('#modalRoot').innerHTML=`<div class="ov"><div class="modal"><h3>Back-up plakken</h3><p class="small">Open de vorige versie van de app, ga naar <b>Instellingen</b> en tik op <b>Back-up kopiëren</b>. Plak de tekst hieronder. Je huidige gegevens in deze app worden vervangen.</p><div class="f"><textarea id="pasteTxt" rows="8" placeholder="Plak hier je back-up"></textarea></div><div class="err" id="pErr"></div><div class="actions"><button class="btn sec" id="pNo">Annuleren</button><button class="btn" id="pYes">Terugzetten</button></div></div></div>`;
+  $('#pNo').onclick=closeModal;
+  $('#pYes').onclick=()=>{ try{ restoreFrom(JSON.parse($('#pasteTxt').value.trim())); closeModal(); save(); render(); toast('Back-up teruggezet en opgeslagen'); }catch(e){ $('#pErr').textContent='Dit is geen geldige back-up. Kopieer hem opnieuw en plak de hele tekst.'; } };
+  setTimeout(()=>$('#pasteTxt').focus(),30);
+}
+function confirmBox(msg,onYes,yes='Verwijderen'){
+  $('#modalRoot').innerHTML=`<div class="ov"><div class="modal"><h3>Weet je het zeker?</h3><p>${msg}</p><div class="actions"><button class="btn sec" id="cNo">Annuleren</button><button class="btn danger" id="cYes">${esc(yes)}</button></div></div></div>`;
+  $('#cNo').onclick=closeModal; $('#cYes').onclick=()=>{ onYes(); closeModal(); save(); render(); };
+}
+function toast(t){ const d=document.createElement('div'); d.className='toast'; d.textContent=t; document.body.appendChild(d); setTimeout(()=>d.remove(),2600); }
+
+/* ---- concrete formulieren ---- */
+function accountForm(a){
+  const isNew=!a; a=a||{type:'spaar',besch:true,renteFreq:'maand',saldoDate:todayStr()};
+  form({title:isNew?'Rekening toevoegen':'Rekening bewerken', values:a, fields:[
+    {k:'name',label:'Naam',req:true,ph:'Bijv. Spaarrekening ING'},
+    {k:'type',label:'Soort',type:'select',options:Object.entries(TYPES).map(([k,t])=>[k,t.label])},
+    ...(isNew?[
+      {k:'saldo',label:'Huidig saldo of waarde (€, optioneel)',type:'num',help:'Je kunt het saldo ook later invoeren.'},
+      {k:'saldoDate',label:'Peildatum van dit saldo',type:'date',show:o=>o.saldo!=null&&!isNaN(o.saldo)}
+    ]:[]),
+    {k:'rente',label:(a.rates||[]).length?'Startpercentage rente (%)':'Rentepercentage per jaar (%)',type:'num',ph:'Bijv. 2,1',show:o=>TYPES[o.type].rente,help:'Wijzigt de rente later? Gebruik dan de knop "Rentewijziging" bij de rekening, dan blijven eerdere maanden met het oude percentage gerekend.'},
+    {k:'renteFreq',label:'Frequentie rente-uitkering',type:'select',options:Object.entries(RFREQ),show:o=>TYPES[o.type].rente},
+    {k:'renteDag',label:'Verwachte uitkeringsdatum (eerstvolgende)',type:'date',show:o=>TYPES[o.type].rente,help:'Bij maandelijkse uitkering telt de dag, bij een uitkering per kwartaal of per jaar ook de maand.'},
+    {k:'inleg',label:'Verwachte inleg per maand (€, optioneel)',type:'num',show:o=>TYPES[o.type].rente,help:'Alleen voor de vooruitblik. Een inleg is een overboeking binnen je vermogen, geen uitgave.'},
+    {k:'gram',label:'Gewicht in gram (24 karaat)',type:'num',ph:'Bijv. 62,2',show:o=>o.type==='goud',help:'Dan berekent de app de waarde zelf uit de goudprijs: gewicht × goudprijs × percentage.'},
+    {k:'goldPct',label:'Percentage van de goudprijs (%)',type:'num',ph:'Bijv. 95',show:o=>o.type==='goud',help:'Bijv. 95 als je bij verkoop 95% van de goudprijs krijgt. Leeg = 100%.'},
+    {k:'besch',label:'Direct beschikbaar (telt mee als vrij besteedbaar geld)',type:'cb'},
+    {k:'start',label:'Geopend op (optioneel)',type:'date',help:'Maanden vóór deze datum tellen niet als "onbekend".'}
+  ], onSave:o=>{
+    if(isNew){
+      const sal=o.saldo, sd=o.saldoDate||todayStr(); delete o.saldo; delete o.saldoDate;
+      const acc=Object.assign({id:uid()},o); S.accounts.push(acc);
+      if(sal!=null && !isNaN(sal)){ S.meas.push({id:uid(),acc:acc.id,date:sd,value:sal,at:Date.now()}); toast('Rekening en saldo toegevoegd'); }
+      else toast('Rekening toegevoegd');
+    }
+    else Object.assign(a,o);
+  }});
+  if(isNew){ const sel=$('#f_type'); sel.addEventListener('change',()=>{ $('#f_besch').checked=!!TYPES[sel.value].besch; }); }
+}
+function measForm(acc, m){
+  const isNew=!m; const cur=currentOf(acc.id);
+  form({title:(isNew?'Saldo invoeren':'Meting bewerken')+' – '+acc.name, values:m||{date:todayStr()},
+    extra: cur?`<div class="info">Huidige waarde: <b>${E2(cur.value)}</b> (peildatum ${dNl(cur.date)})</div>`:'',
+    fields:[
+      {k:'value',label:TYPES[acc.type].waarde?'Actuele waarde (€)':'Saldo (€)',type:'num',req:true},
+      {k:'date',label:'Peildatum',type:'date',req:true}
+    ], onSave:o=>{
+      if(isNew){ S.meas.push({id:uid(),acc:acc.id,date:o.date,value:o.value,at:Date.now()});
+        if(cur && o.date<cur.date) toast('Opgeslagen. Let op: oudere peildatum, het actuele saldo blijft '+E(cur.value));
+        else toast('Saldo opgeslagen'); }
+      else { m.value=o.value; m.date=o.date; }
+    }});
+}
+function flowForm(acc){
+  form({title:'Aankoop of verkoop – '+acc.name, values:{date:todayStr(),dir:'koop'},
+    extra:'<div class="info">Een aankoop is een verschuiving binnen je vermogen, geen uitgave. De app gebruikt dit alleen om het rendement zuiver te berekenen: geld dat je bijstort telt niet als winst.</div>',
+    fields:[
+      {k:'dir',label:'Soort',type:'select',options:[['koop','Aankoop (geld erbij gestoken)'],['verkoop','Verkoop (geld eruit gehaald)']]},
+      {k:'amount',label:'Bedrag (€)',type:'num',req:true},
+      {k:'date',label:'Datum',type:'date',req:true},
+      {k:'note',label:'Omschrijving',ph:'Bijv. 2 munten gekocht'}
+    ], onSave:o=>{ S.flows.push({id:uid(),acc:acc.id,date:o.date,amount:(o.dir==='koop'?1:-1)*Math.abs(o.amount),note:o.note}); toast('Opgeslagen. Vergeet niet ook de nieuwe waarde in te voeren.'); }});
+}
+function rateForm(acc){
+  form({title:'Rentewijziging – '+acc.name, values:{from:todayStr()},
+    extra:`<div class="info">Huidige rente: <b>${numIn(rateAt(acc,todayStr()))}%</b>. Een wijziging geldt vanaf de ingangsdatum; eerdere perioden blijven met het oude percentage gerekend. Je kunt ook een verwachte rente voor later invoeren, met een datum in de toekomst.</div>`,
+    fields:[{k:'pct',label:'Nieuw rentepercentage per jaar (%)',type:'num',req:true},{k:'from',label:'Ingangsdatum',type:'date',req:true}],
+    onSave:o=>{ acc.rates=(acc.rates||[]).filter(r=>r.from!==o.from); acc.rates.push({id:uid(),from:o.from,pct:o.pct}); toast('Rentewijziging opgeslagen'); }});
+}
+function interestForm(acc){
+  form({title:'Ontvangen rente – '+acc.name, values:{date:todayStr()},
+    extra:'<div class="info">Het bedrag dat de bank echt heeft uitgekeerd, zoals in je bankapp staat. Voor een jaar met ontvangen rente gebruikt de app die bedragen in plaats van de schatting.</div>',
+    fields:[{k:'amount',label:'Ontvangen rente (€)',type:'num',req:true},{k:'date',label:'Datum uitkering',type:'date',req:true},{k:'note',label:'Omschrijving',ph:'Bijv. rente oktober'}],
+    onSave:o=>{ S.interest.push({id:uid(),acc:acc.id,date:o.date,amount:o.amount,note:o.note}); toast('Ontvangen rente opgeslagen'); }});
+}
+/* Terugkerende investeringen: latere herhalingen in de reeks worden opnieuw opgebouwd vanaf deze investering */
+function addYearsIso(d,n){ const y=+d.slice(0,4)+n, m=d.slice(5,7); const last=+lastDay(y+'-'+m).slice(8); return y+'-'+m+'-'+pad(Math.min(+d.slice(8),last)); }
+function applySeries(rec){
+  if(rec.series) S.actuals=S.actuals.filter(x=>!(x.series===rec.series && x!==rec && x.date>rec.date));
+  if(!rec.rep){ delete rec.series; return 0; }
+  rec.series ||= uid(); let n=0;
+  for(let k=1;;k++){ const d=addYearsIso(rec.date,k*rec.repYears); if(+d.slice(0,4)>rec.repUntil) break;
+    const f=Math.pow(1+(+rec.repInfl||0)/100,k*rec.repYears);
+    S.actuals.push({id:uid(),kind:'uit',cat:rec.cat,sub:rec.sub||'',date:d,amount:Math.round(rec.amount*f),note:rec.note,months:rec.months,series:rec.series,rep:true,repYears:rec.repYears,repUntil:rec.repUntil,repInfl:rec.repInfl}); n++; }
+  return n;
+}
+function actualForm(kind, a, presetYm){
+  const isNew=!a; const cats=kind==='in'?S.incCats:S.expCats;
+  const defDate = presetYm && presetYm!==curYm() ? lastDay(presetYm) : todayStr();
+  a=a||{kind,date:defDate,cat:cats[0]};
+  const th=S.settings.threshold;
+  form({title:(isNew?'Werkelijke ':'')+(kind==='in'?'inkomst':'uitgave')+(isNew?' toevoegen':' bewerken'), values:Object.assign({}, a, {months:a.months||36, repYears:a.repYears||Math.max(1,Math.round((a.months||60)/12)), repUntil:a.repUntil||curY()+30, repInfl:a.repInfl??S.settings.infl}),
+    extra: kind==='uit'?`<div class="info"><b>Toekomstige aankoop?</b> Vul de datum in waarop je verwacht te betalen en het bedrag dat je dan verwacht te betalen, dus inclusief prijsstijging. De prognose telt het volledig mee in dat jaar.</div><div class="info">Uitgaven boven <b>${E(th)}</b> worden automatisch een investering en via "Afschrijving" over de maanden verdeeld. Je kunt dat per uitgave uitzetten.${S.settings.noInvCats.length?` Categorieën die nooit een investering worden: <b>${S.settings.noInvCats.map(esc).join(', ')}</b>.`:''}</div>`:'',
+    fields:[
+      {k:'amount',label:'Bedrag (€, netto)',type:'num',req:true},
+      {k:'cat',label:'Categorie',type:'select',options:cats},
+      ...(kind==='uit'?[{k:'sub',label:'Subcategorie (optioneel)',type:'select',options:[['','– geen –'],...(S.subCats[a.cat]||[])],show:o=>(S.subCats[o.cat]||[]).length>0}]:[]),
+      {k:'date',label:'Datum (bepaalt de maand)',type:'date',req:true},
+      {k:'note',label:'Omschrijving',ph:kind==='in'?'Bijv. vakantiegeld':'Bijv. maandtotaal of wasmachine'},
+      ...(kind==='uit'?[
+        {k:'regular',label:'Toch als gewone uitgave boeken (geen investering)',type:'cb',show:o=>o.amount>th && !noInv(o.cat) && !a.grid},
+        {k:'months',label:'Afschrijven over hoeveel maanden?',type:'num',req:true,show:o=>o.amount>th && !o.regular && !noInv(o.cat) && !a.grid, help:'Bijv. 36 voor drie jaar. Investeringen uit het verleden: de verstreken maanden horen bij die maanden.'},
+        {k:'rep',label:'Herhalen (terugkerende investering, bijv. elke 8 jaar een auto)',type:'cb',show:o=>o.amount>th && !o.regular && !noInv(o.cat) && !a.grid, help:a.series?'Deze investering hoort bij een reeks. Wijzigingen gelden ook voor de latere herhalingen; eerdere blijven ongewijzigd. Zet het vinkje uit om de latere herhalingen te verwijderen.':''},
+        {k:'repYears',label:'Om de hoeveel jaar?',type:'num',req:true,show:o=>o.rep && o.amount>th && !o.regular && !noInv(o.cat) && !a.grid},
+        {k:'repUntil',label:'Herhalen tot en met jaar',type:'num',req:true,show:o=>o.rep && o.amount>th && !o.regular && !noInv(o.cat) && !a.grid},
+        {k:'repInfl',label:'Prijsstijging per jaar (%)',type:'num',show:o=>o.rep && o.amount>th && !o.regular && !noInv(o.cat) && !a.grid, help:'Elke herhaling wordt duurder met dit percentage per jaar. Standaard de inflatie uit Instellingen.'}
+      ]:[])
+    ], onSave:o=>{
+      if(o.months!=null && (o.months<1||!Number.isFinite(o.months))) return 'Het aantal maanden moet minimaal 1 zijn.';
+      if(o.months) o.months=Math.round(o.months);
+      const rec=Object.assign(isNew?{id:uid(),kind}:a, o);
+      if(!(o.amount>th) || noInv(o.cat)) { delete rec.regular; delete rec.months; }
+      if(o.rep && isInv(rec)){
+        if(!(o.repYears>=1)) return 'Vul bij "Om de hoeveel jaar" minimaal 1 in.';
+        if(!(o.repUntil>=+o.date.slice(0,4))) return 'Het jaar bij "Herhalen tot en met" ligt vóór de datum van de aankoop.';
+        if(o.repUntil>curY()+60) return 'Herhalen kan tot maximaal '+(curY()+60)+'.';
+        rec.repYears=Math.round(o.repYears); rec.repUntil=Math.round(o.repUntil); rec.repInfl=(o.repInfl==null||isNaN(o.repInfl))?0:o.repInfl;
+      } else { delete rec.rep; delete rec.repYears; delete rec.repUntil; delete rec.repInfl; }
+      if(isNew) S.actuals.push(rec);
+      const n=applySeries(rec);
+      toast(isInv(rec)?`Opgeslagen als investering (${E2(rec.amount/rec.months)} per maand)${n?`, plus ${n} herhaling${n===1?'':'en'}`:''}`:'Opgeslagen');
+    }});
+  if(kind==='uit'){ const cs=$('#f_cat'), ss=$('#f_sub'); cs.addEventListener('change',()=>{ ss.innerHTML=['<option value="">– geen –</option>',...(S.subCats[cs.value]||[]).map(x=>`<option>${esc(x)}</option>`)].join(''); }); }
+}
+function expectedForm(e, presetYm){
+  const isNew=!e; e=e||{kind:'uit',ym:presetYm||curYm()};
+  form({title:isNew?'Verwachting toevoegen':'Verwachting bewerken', values:e,
+    extra:'<div class="info">Voor een eenmalige of afwijkende verwachting in één maand. Terugkerende bedragen leg je vast bij "Vaste posten".</div>',
+    fields:[
+      {k:'kind',label:'Soort',type:'select',options:[['uit','Uitgave'],['in','Inkomst']]},
+      {k:'cat',label:'Categorie',type:'select',options:[...new Set([...S.expCats,...S.incCats])]},
+      {k:'amount',label:'Verwacht bedrag (€)',type:'num',req:true},
+      {k:'ym',label:'Maand',type:'month',req:true},
+      {k:'note',label:'Omschrijving'}
+    ], onSave:o=>{ if(isNew) S.expected.push(Object.assign({id:uid()},o)); else Object.assign(e,o); }});
+  const kindSel=$('#f_kind'), catSel=$('#f_cat');
+  const fill=()=>{ const cats=kindSel.value==='in'?S.incCats:S.expCats; const cur=catSel.value; catSel.innerHTML=cats.map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join(''); };
+  kindSel.addEventListener('change',fill); fill(); if(e.cat) catSel.value=e.cat;
+}
+function recurringForm(kind, r){
+  const isNew=!r; const cats=kind==='in'?S.incCats:S.expCats;
+  r=r||{kind,freq:1,start:curYm(),cat:cats[0],person:''};
+  const fields=[
+    {k:'name',label:'Omschrijving',req:true,ph:kind==='in'?'Bijv. Netto salaris':'Bijv. Hypotheek'},
+    {k:'amount',label:'Netto bedrag per termijn (€)',type:'num',req:true},
+    {k:'cat',label:'Categorie',type:'select',options:cats},
+    {k:'person',label:'Van wie?',type:'select',options:[['','Samen'],...S.settings.people.map(p=>[p,p])]},
+    {k:'freq',label:'Frequentie',type:'select',options:Object.entries(FREQ)},
+    {k:'start',label:'Eerste termijn (maand)',type:'month',req:true},
+    {k:'end',label:'Laatste termijn (optioneel)',type:'month'},
+    {k:'day',label:'Verwachte betaaldag',ph:'Bijv. 25'}
+  ];
+  if(!isNew) fields.unshift({k:'from',label:'Wijziging geldt vanaf (optioneel)',type:'month',help:'Leeg = de wijziging geldt voor de hele looptijd. Met een maand blijven eerdere verwachtingen ongewijzigd en start er vanaf die maand een nieuwe versie.'});
+  form({title:(isNew?'Vaste '+(kind==='in'?'inkomst':'last')+' toevoegen':'Vaste post bewerken'), values:r, fields, onSave:o=>{
+    o.freq=+o.freq;
+    if(o.end && o.end<o.start) return 'De laatste termijn ligt vóór de eerste.';
+    if(isNew){ S.recurring.push(Object.assign({id:uid(),kind},o)); return; }
+    const from=o.from; delete o.from;
+    if(from && from>r.start){
+      const prevEnd=iYm(ymI(from)-1);
+      S.recurring.push(Object.assign({id:uid(),kind:r.kind},o,{start:from}));
+      r.end=prevEnd; toast('Nieuwe versie vanaf '+mLong(from));
+    } else Object.assign(r,o);
+  }});
+}
+function plannedForm(p){
+  const isNew=!p; p=p||{year:curY()+3};
+  form({title:isNew?'Geplande uitgave toevoegen':'Geplande uitgave bewerken', values:p,
+    extra:'<div class="info">Bedrag in euro\'s van nu. De app telt de ingestelde inflatie er tot dat jaar bij.</div>',
+    fields:[{k:'name',label:'Omschrijving',req:true,ph:'Bijv. groot onderhoud huis'},{k:'year',label:'Jaar',type:'num',req:true},{k:'amount',label:'Bedrag (€, prijspeil nu)',type:'num',req:true}],
+    onSave:o=>{ o.year=Math.round(o.year); if(o.year<curY()) return 'Kies dit jaar of later.'; if(isNew) S.planned.push(Object.assign({id:uid()},o)); else Object.assign(p,o); }});
+}
+function histRendForm(){
+  form({title:'Rendement handmatig invoeren', values:{year:curY()-1,acc:''},
+    extra:'<div class="info">Een handmatig rendement gaat vóór de berekening van de app voor dat jaar.</div>',
+    fields:[{k:'year',label:'Jaar',type:'num',req:true},{k:'acc',label:'Rekening',type:'select',options:[['','Totaal vermogen'],...S.accounts.map(a=>[a.id,a.name])]},{k:'pct',label:'Rendement (%)',type:'num',req:true,ph:'Bijv. 3,4'}],
+    onSave:o=>{ o.year=Math.round(o.year); S.histRend=S.histRend.filter(h=>!(+h.year===o.year && h.acc===o.acc)); S.histRend.push(Object.assign({id:uid()},o)); }});
+}
+
+/* ============ Weergaven ============ */
+const ICON = {
+  analyse:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  invoer:'<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  overzicht:'<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>',
+  rekeningen:'<path d="M3 10h18M5 6h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zM7 15h3"/>',
+  maand:'<path d="M7 3v3M17 3v3M4 8h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>',
+  vast:'<path d="M4 4v6h6M20 20v-6h-6M5 15a8 8 0 0 0 14 2M19 9A8 8 0 0 0 5 7"/>',
+  investeringen:'<path d="M3 21h18M5 21V10l7-6 7 6v11M9 21v-6h6v6"/>',
+  rendement:'<path d="M3 17l6-6 4 4 8-8M14 7h7v7"/>',
+  prognose:'<path d="M3 3v18h18M7 15l4-4 3 3 6-7"/>',
+  instellingen:'<path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
+};
+const VIEWS = [['overzicht','Overzicht'],['rekeningen','Rekeningen'],['invoer','Invoeren'],['maand','Maand'],['analyse','Analyse'],['vast','Vaste posten'],['investeringen','Investeringen'],['rendement','Rendement'],['prognose','30 jaar'],['instellingen','Instellingen']];
+let view='overzicht', selYm=null, openHist={}, gridYm=null, gridOpen={}, anKind='uit', anPer='last12', anYm=null, anFrom=null, anTo=null, anFocus=null, anSubs=true, invKind='uit', invMode=null, invFwd=true, invView='maand';
+
+function renderNav(){
+  $('#nav').innerHTML=`<div class="brand">Huishoudfinanciën<small>${esc(S.settings.people.join(' & '))}</small></div>`+
+    VIEWS.map(([k,l])=>`<a href="#${k}" class="${k===view?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>${l}</a>`).join('');
+}
+function isEmptyData(){ return !S.demo && !S.accounts.length && !S.actuals.length && !S.recurring.length; }
+function demoBanner(){ if(S.loading) return `<div class="info">Gegevens laden…</div>`; if(isEmptyData()) return `<div class="info"><b>Nog geen gegevens.</b> Zet je gegevens over uit de vorige versie van de app: open daar <b>Instellingen → Back-up kopiëren</b> (of downloaden), en kies hier <a href="#instellingen">Instellingen → Back-up plakken</a> (of terugzetten).</div>`; return S.demo?`<div class="warn">Je bekijkt <b>verzonnen voorbeeldgegevens</b>. Wis ze via Instellingen voordat je echte gegevens invoert.</div>`:''; }
+function completeness(st){
+  let h='';
+  if(st.missing.length) h+=`<div class="warn">Totaal niet volledig bekend: geen saldo voor ${st.missing.map(esc).join(', ')}.</div>`;
+  if(st.stale.length) h+=`<div class="small muted">Laatst bekende waarde gebruikt voor: ${st.stale.map(s=>esc(s.name)+' ('+dNl(s.date)+')').join(', ')}.</div>`;
+  return h;
+}
+function vOverzicht(){
+  const cur=curYm(), st=monthStatus(cur), mo=monthOverview(cur), tr=totalRend(curY());
+  const ms=S.meas.map(m=>m.date.slice(0,7)).sort(); const c=ymI(cur);
+  const startI=ms.length?Math.max(ymI(ms[0]),c-35):c-11; const labels=[],tot=[],bes=[],hollow=[];
+  for(let i=startI;i<=c;i++){ const ym=iYm(i), s=monthStatus(ym); labels.push(mName(ym)); tot.push(s.known?s.total:null); bes.push(s.known?s.besch:null); if(s.missing.length) hollow.push(i-startI); }
+  const l12=[],inc=[],exp=[]; for(let i=c-11;i<=c;i++){ const ym=iYm(i), o=monthOverview(ym); l12.push(mName(ym)); inc.push(o.tIn.geld); exp.push(o.tUit.geld); }
+  const ev=calendarEvents().slice(0,8);
+  return `<h1>Overzicht</h1><p class="sub">Stand van zaken op ${dNl(todayStr())}</p>${demoBanner()}
+  <div class="grid g4">
+    <div class="tile"><div class="lbl">Totaal vermogen</div><div class="val">${E(st.total)}</div><div class="note">${st.missing.length?'<span class="badge w">onvolledig</span>':st.stale.length?'<span class="badge">deels laatst bekend</span>':'<span class="badge g">volledig</span>'}</div></div>
+    <div class="tile alt"><div class="lbl">Direct beschikbaar</div><div class="val">${E(st.besch)}</div><div class="note">Zonder deposito, goud, crypto en beleggingen</div></div>
+    <div class="tile alt2"><div class="lbl">Deze maand: in / uit</div><div class="val" style="font-size:19px">${E(mo.tIn.geld)} <span class="muted" style="font-weight:400">/</span> ${E(mo.tUit.geld)}</div><div class="note">Werkelijk waar ingevuld, anders verwacht</div></div>
+    <div class="tile alt3"><div class="lbl">Rendement ${curY()}</div><div class="val">${tr?P(tr.pct):'–'}</div><div class="note">${tr&&tr.eur!=null?E(tr.eur)+' · rente verwacht, waarde tot nu':'Nog onvoldoende gegevens'}</div></div>
+  </div>
+  <div class="card" style="margin-top:18px">${completeness(st)}<h2>Vermogen per maand</h2>${lineChart({labels,series:[{name:'Totaal vermogen',values:tot,color:'#1d5fbf',markHollow:true},{name:'Direct beschikbaar',values:bes,color:'#93b8ea'}],hollow})}<div class="small muted">Een open rondje betekent: van minstens één rekening was in die maand nog helemaal geen waarde bekend. Rekeningen zonder meting in een maand tellen mee met hun laatst bekende waarde.</div></div>
+  <div class="grid g2">
+    <div class="card"><h2>Inkomsten en uitgaven, laatste 12 maanden</h2>${barChart({labels:l12,series:[{name:'Inkomsten',values:inc,color:'#1d5fbf'},{name:'Uitgaven (incl. afschrijving)',values:exp,color:'#d9773a'}]})}</div>
+    <div class="card"><h2>Komende 12 maanden</h2><div class="cal">${ev.length?ev.map(e=>`<div class="ev"><div class="dt">${e.yearOnly?e.ym.slice(0,4):mName(e.ym)}</div><div style="flex:1">${esc(e.txt)} <span class="badge ${e.badge==='loopt af'?'w':''}">${esc(e.badge)}</span></div><div class="n ${e.kind==='in'?'pos':''}">${E(e.amt)}</div></div>`).join(''):'<p class="muted">Geen wijzigingen gepland.</p>'}</div><a class="btn ghost sm" href="#vast" style="margin-top:8px">Alle vaste posten →</a></div>
+  </div>`;
+}
+const GOLD_URL='https://goudonline.nl/goudprijs/24-karaat/';
+const goldPctOf = a => (a.goldPct==null||isNaN(a.goldPct)||a.goldPct==='')?100:+a.goldPct;
+const goldAccs = () => S.accounts.filter(a=>a.type==='goud');
+function goldBlock(a){
+  const gp=S.settings.goldPrice||{}, price=gp.price, g=+a.gram||0, pc=goldPctOf(a);
+  const calc = g ? (price ? `${numIn(g)} g × ${E2(price)} per gram × ${numIn(pc)}% = <b>${E2(g*price*pc/100)}</b>` : `${numIn(g)} g × goudprijs × ${numIn(pc)}%`) : 'Vul via <b>Bewerken</b> het gewicht in gram in, dan berekent de app de waarde uit de goudprijs.';
+  return `<div class="small muted" style="margin-top:8px">${calc}${gp.date?` · goudprijs van ${dNl(gp.date)}`:''}</div>
+    <div class="row" style="margin-top:10px;gap:8px">
+      <a class="btn sec sm" style="text-decoration:none" href="${GOLD_URL}" target="_blank" rel="noopener">Goudprijs 24 karaat ↗</a>
+      <input class="goldPrice" data-id="${a.id}" inputmode="decimal" autocomplete="off" value="${esc(numIn(price))}" placeholder="Prijs per gram" aria-label="Goudprijs per gram (€)" style="width:130px;padding:5px 10px;font-size:13px;border:1px solid var(--line);border-radius:10px;background:#fff">
+      <button class="btn sm" data-a="goldUpd" data-id="${a.id}">Goudwaarde bijwerken</button>
+    </div>`;
+}
+function goldCard(){
+  const accs=goldAccs(); if(!accs.length) return '';
+  const gp=S.settings.goldPrice||{}, price=gp.price;
+  const rows=accs.map(a=>{ const g=+a.gram||0, pc=goldPctOf(a);
+    return `<tr><td>${esc(a.name)}</td><td class="n">${g?numIn(g)+' g':'<span class="muted">geen gewicht</span>'}</td><td class="n">${numIn(pc)}%</td><td class="n">${g&&price?E2(g*price*pc/100):'–'}</td><td class="n"><button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Wijzig</button></td></tr>`; }).join('');
+  return `<div class="card"><h2>Goudprijs 24 karaat</h2>
+    <p class="small muted" style="margin-top:-4px">Open goudonline.nl, neem de actuele prijs per gram over en klik op "Waarde bijwerken". De app berekent per goudrekening gewicht × goudprijs × percentage en slaat dat op als saldo van vandaag.</p>
+    <div class="row" style="align-items:flex-end;gap:10px">
+      <a class="btn sec" style="text-decoration:none" href="${GOLD_URL}" target="_blank" rel="noopener">Open goudonline.nl ↗</a>
+      <div class="f" style="margin:0"><label for="goldPrice">Prijs per gram (€)</label><input id="goldPrice" inputmode="decimal" autocomplete="off" value="${esc(numIn(price))}" placeholder="Bijv. 112,50" style="width:140px"></div>
+      <button class="btn" data-a="goldUpd">Waarde bijwerken</button>
+      ${gp.date?`<span class="small muted">Laatst bijgewerkt: ${dNl(gp.date)} (€ ${numIn(price)} per gram)</span>`:''}
+    </div>
+    <div class="small muted" style="margin-top:6px">Werkt de link niet? Ga dan naar <b>goudonline.nl/goudprijs/24-karaat</b>.</div>
+    <div class="tablewrap" style="margin-top:12px"><table><tr><th>Rekening</th><th class="n">Gewicht</th><th class="n">Percentage</th><th class="n">Waarde</th><th></th></tr>${rows}</table></div></div>`;
+}
+function vRekeningen(){
+  const st=monthStatus(curYm());
+  const cards=S.accounts.map(a=>{
+    const t=TYPES[a.type], cur=currentOf(a.id), ms=measOf(a.id).slice().reverse();
+    const fl=S.flows.filter(f=>f.acc===a.id).sort((x,y)=>x.date<y.date?1:-1);
+    const rts=(a.rates||[]).slice().sort((x,y)=>x.from<y.from?1:-1), ints=S.interest.filter(x=>x.acc===a.id).sort((x,y)=>x.date<y.date?1:-1);
+    const fc=hasRate(a)?savingsForecast(a):null;
+    return `<div class="card"><div class="acc"><div><div class="nm">${esc(a.name)}</div><div class="row small muted" style="gap:6px;margin-top:3px"><span class="badge">${esc(t.label)}</span>${a.besch?'<span class="badge g">direct beschikbaar</span>':'<span class="badge d">vastgezet / niet direct</span>'}${hasRate(a)?`<span>${numIn(rateAt(a,todayStr()))}% rente · ${esc(RFREQ[a.renteFreq]||'')}${a.renteDag?' · '+esc(payoutLabel(a)):''}${a.inleg?' · inleg '+E(a.inleg)+' p/m':''}</span>`:''}</div></div>
+      <div><div class="v">${cur?E2(cur.value):'<span class="muted" style="font-size:16px">onbekend</span>'}</div><div class="small muted" style="text-align:right">${cur?'peildatum '+dNl(cur.date):'nog geen meting'}</div></div></div>
+      ${fc?`<div class="small muted" style="margin-top:8px">Verwachte rente komende 12 maanden: <b>${E(fc.int12)}</b> · verwacht saldo over 12 maanden: <b>${E(fc.rows[11].bal)}</b></div>`:''}
+      ${a.type==='goud'?goldBlock(a):''}
+      <div class="row" style="margin-top:12px"><button class="btn sm" data-a="meas" data-id="${a.id}">Saldo invoeren</button>${t.waarde?`<button class="btn sec sm" data-a="flow" data-id="${a.id}">Aankoop / verkoop</button>`:''}${t.rente?`<button class="btn sec sm" data-a="rate" data-id="${a.id}">Rentewijziging</button><button class="btn sec sm" data-a="intr" data-id="${a.id}">Ontvangen rente</button>`:''}<button class="btn ghost sm" data-a="hist" data-id="${a.id}">${openHist[a.id]?'Verberg':'Toon'} geschiedenis (${ms.length})</button><span class="spacer"></span><button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Bewerken</button><button class="btn ghost sm" data-a="delAcc" data-id="${a.id}">Verwijderen</button></div>
+      ${openHist[a.id]?`<div class="tablewrap" style="margin-top:10px"><table><tr><th>Peildatum</th><th class="n">Waarde</th><th></th></tr>${ms.map(m=>`<tr><td>${dNl(m.date)}</td><td class="n">${E2(m.value)}</td><td class="n"><button class="btn ghost sm" data-a="editMeas" data-id="${m.id}">Bewerk</button><button class="btn ghost sm" data-a="delMeas" data-id="${m.id}">✕</button></td></tr>`).join('')}</table>
+        ${rts.length?`<h2 style="margin-top:14px;font-size:14px">Rentewijzigingen</h2><table>${rts.map(r=>`<tr><td>vanaf ${dNl(r.from)}</td><td class="n">${numIn(r.pct)}%</td><td class="n"><button class="btn ghost sm" data-a="delRate" data-acc="${a.id}" data-id="${r.id}">✕</button></td></tr>`).join('')}<tr><td class="muted">daarvoor (start)</td><td class="n muted">${numIn(a.rente||0)}%</td><td></td></tr></table>`:''}
+        ${ints.length?`<h2 style="margin-top:14px;font-size:14px">Ontvangen rente</h2><table>${ints.map(x=>`<tr><td>${dNl(x.date)}</td><td>${esc(x.note||'')}</td><td class="n">${E2(x.amount)}</td><td class="n"><button class="btn ghost sm" data-a="delInt" data-id="${x.id}">✕</button></td></tr>`).join('')}</table>`:''}
+        ${fl.length?`<h2 style="margin-top:14px;font-size:14px">Aankopen en verkopen</h2><table>${fl.map(f=>`<tr><td>${dNl(f.date)}</td><td>${esc(f.note||'')}</td><td class="n">${f.amount>0?'+':''}${E2(f.amount)}</td><td class="n"><button class="btn ghost sm" data-a="delFlow" data-id="${f.id}">✕</button></td></tr>`).join('')}</table>`:''}</div>`:''}
+    </div>`;
+  }).join('');
+  return `<div class="row"><div><h1>Rekeningen</h1><p class="sub">Totaal bekend: <b>${E(st.total)}</b> · direct beschikbaar: <b>${E(st.besch)}</b></p></div><span class="spacer"></span><button class="btn" data-a="addAcc">+ Rekening</button></div>${demoBanner()}${completeness(st)}
+  <div class="info">Het actuele saldo is steeds de meting met de <b>meest recente peildatum</b>. Voer je later een meting met een oudere datum in, dan telt die alleen voor die eerdere maand.</div>
+  ${cards||'<div class="card muted">Nog geen rekeningen. Voeg je eerste rekening toe.</div>'}`;
+}
+function catTable(kind, mo, past){
+  const cats=Object.keys(mo[kind]).sort((a,b)=>a===AFS?1:b===AFS?-1:a.localeCompare(b));
+  if(!cats.length) return '<p class="muted">Niets verwacht of ingevuld.</p>';
+  const t=kind==='in'?mo.tIn:mo.tUit;
+  return `<div class="tablewrap"><table><tr><th>Categorie</th><th class="n">Verwacht</th><th class="n">Werkelijk</th><th class="n">Verschil</th></tr>${cats.map(c=>{const o=mo[kind][c]; const d=o.hasAct&&c!==AFS?o.act-o.exp:null; const bad=d!=null&&(kind==='uit'?d>0:d<0);
+    return `<tr><td>${esc(c)}${c===AFS?' <span class="badge">verdeling, geen betaling</span>':''}${past&&!o.hasAct?' <span class="badge w">nog verwacht</span>':''}</td><td class="n">${E(o.exp)}</td><td class="n">${o.hasAct?E(o.act):'<span class="muted">–</span>'}</td><td class="n ${d==null?'':bad?'neg':'pos'}">${d==null?'':(d>0?'+':'')+E(d)}</td></tr>${mo.sub[kind+'|'+c]?Object.entries(mo.sub[kind+'|'+c]).map(([sb,v])=>`<tr class="small muted"><td style="padding-left:26px">↳ ${esc(sb)}</td><td></td><td class="n">${E(v)}</td><td></td></tr>`).join(''):''}`;}).join('')}
+    <tr class="tot"><td>Totaal</td><td class="n">${E(t.exp)}</td><td class="n">${E(t.act)}</td><td></td></tr></table></div>`;
+}
+function vMaand(){
+  const ym=selYm||curYm(), mo=monthOverview(ym), past=ym<curYm(), st=monthStatus(ym);
+  const acts=S.actuals.filter(a=>a.date.slice(0,7)===ym).sort((a,b)=>a.kind===b.kind?(a.date<b.date?-1:1):a.kind==='in'?-1:1);
+  const exps=S.expected.filter(e=>e.ym===ym);
+  return `<div class="row"><div><h1>Maand</h1><p class="sub">Verwachte en werkelijke bedragen staan naast elkaar en worden nooit bij elkaar opgeteld.</p></div></div>${demoBanner()}
+  <div class="card"><div class="row">${monthPicker(ym,'mYm',k=>S.actuals.some(a=>a.date.slice(0,7)===k))}</div><div class="row" style="margin-top:12px"><button class="btn sec sm" data-a="mPrev" title="Vorige maand">‹</button><b style="text-transform:capitalize;font-size:17px">${mLong(ym)}</b><button class="btn sec sm" data-a="mNext" title="Volgende maand">›</button>${ym===curYm()?'<span class="badge">huidige maand</span>':''}<span class="spacer"></span>
+    <button class="btn sm" data-a="addAct" data-k="uit">+ Werkelijke uitgave</button><button class="btn sm" data-a="addAct" data-k="in">+ Werkelijke inkomst</button><button class="btn sec sm" data-a="addExp">+ Verwachting</button></div>
+    <div class="grid g3" style="margin-top:14px">
+      <div><div class="muted small">Inkomsten (geldend)</div><div style="font-size:20px;font-weight:700">${E(mo.tIn.geld)}</div></div>
+      <div><div class="muted small">Uitgaven incl. afschrijving (geldend)</div><div style="font-size:20px;font-weight:700">${E(mo.tUit.geld)}</div></div>
+      <div><div class="muted small">Saldo maand</div><div style="font-size:20px;font-weight:700" class="${mo.tIn.geld-mo.tUit.geld<0?'neg':'pos'}">${E(mo.tIn.geld-mo.tUit.geld)}</div></div>
+    </div><div class="small muted" style="margin-top:6px">"Geldend" = per categorie het werkelijke bedrag als dat is ingevuld, anders de verwachting. Vrij beschikbaar eind van de maand: <b>${E(st.besch)}</b>${st.missing.length?' (onvolledig)':''}.</div></div>
+  <div class="grid g2"><div class="card"><h2>Inkomsten</h2>${catTable('in',mo,past)}</div><div class="card"><h2>Uitgaven</h2>${catTable('uit',mo,past)}</div></div>
+  <div class="card"><h2>Ingevoerd in deze maand</h2>${acts.length||exps.length?`<div class="tablewrap"><table><tr><th>Datum</th><th>Soort</th><th>Categorie</th><th>Omschrijving</th><th class="n">Bedrag</th><th></th></tr>
+    ${acts.map(a=>`<tr><td>${dNl(a.date)}</td><td>${a.kind==='in'?'Inkomst':'Uitgave'}${isInv(a)?` <span class="badge d">investering · ${a.months} mnd</span>`:a.grid?' <span class="badge">maandinvoer</span>':a.regular?' <span class="badge">gewone uitgave</span>':''}</td><td>${esc(a.cat)}${a.sub?' · '+esc(a.sub):''}</td><td>${esc(a.note||'')}</td><td class="n">${E2(a.amount)}</td><td class="n">${a.monthTotal!=null?'<span class="small muted">via Invoeren</span>':`<button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button><button class="btn ghost sm" data-a="delAct" data-id="${a.id}">✕</button>`}</td></tr>`).join('')}
+    ${exps.map(e=>`<tr><td class="muted">verwacht</td><td>${e.kind==='in'?'Inkomst':'Uitgave'} <span class="badge">verwachting</span></td><td>${esc(e.cat)}</td><td>${esc(e.note||'')}</td><td class="n">${E2(e.amount)}</td><td class="n"><button class="btn ghost sm" data-a="editExp" data-id="${e.id}">Bewerk</button><button class="btn ghost sm" data-a="delExp" data-id="${e.id}">✕</button></td></tr>`).join('')}
+  </table></div>`:'<p class="muted">Nog niets ingevoerd voor deze maand.</p>'}</div>`;
+}
+const gridRec=(ym,cat,sub,kind='uit')=>S.actuals.find(a=>a.grid&&a.monthTotal==null&&a.kind===kind&&a.date.slice(0,7)===ym&&a.cat===cat&&(a.sub||'')===(sub||''));
+function setGrid(ym,cat,sub,val,kind='uit'){
+  const r=gridRec(ym,cat,sub,kind);
+  if(val==null||isNaN(val)){ if(r) S.actuals=S.actuals.filter(x=>x!==r); return; }
+  if(r) r.amount=val; else S.actuals.push({id:uid(),kind,cat,sub:sub||'',date:lastDay(ym),amount:val,note:sub||'Maandtotaal',grid:true});
+}
+const looseSum=(ym,cat,kind='uit')=>sum(S.actuals.filter(a=>!a.grid&&a.kind===kind&&!isInv(a)&&a.date.slice(0,7)===ym&&a.cat===cat).map(a=>a.amount));
+/* Eigen verwachtingen voor inkomsten: geldt vanaf een maand (tot de volgende wijziging) of alleen voor één maand */
+function planEff(cat,sub,ym){
+  let best=null; for(const p of S.incPlan){ if(p.cat!==cat||p.sub!==sub) continue;
+    if(p.only){ if(p.from===ym) return p; continue; }
+    if(p.from<=ym && (!best||p.from>best.from)) best=p; }
+  return best;
+}
+function setPlan(cat,sub,ym,val,fwd){
+  const amt=(val==null||isNaN(val))?null:val;
+  if(fwd){ S.incPlan=S.incPlan.filter(p=>!(p.cat===cat&&p.sub===sub&&p.from>=ym)); S.incPlan.push({id:uid(),cat,sub,from:ym,amount:amt}); }
+  else { S.incPlan=S.incPlan.filter(p=>!(p.cat===cat&&p.sub===sub&&p.only&&p.from===ym)); S.incPlan.push({id:uid(),cat,sub,from:ym,amount:amt,only:true}); }
+  if(sub && amt!=null){ const t=planEff(cat,'',ym); if(t&&t.amount!=null) setPlan(cat,'',ym,NaN,fwd); }
+}
+/* AOW-leeftijd: vastgesteld t/m 2031 (bron: Rijksoverheid). Later: instelbare aanname, minimaal 67 jaar en 3 maanden. */
+const AOW_FIXED={2024:804,2025:804,2026:804,2027:804,2028:807,2029:807,2030:807,2031:807}; const AOW_FIXED_TO=2031;
+function addMonthsDate(d,n){ const [y,m,dd]=d.split('-').map(Number); const t=new Date(y,m-1+n,1); const last=new Date(t.getFullYear(),t.getMonth()+1,0).getDate(); return t.getFullYear()+'-'+pad(t.getMonth()+1)+'-'+pad(Math.min(dd,last)); }
+function aowInfo(birth){
+  if(!isDate(birth)) return null;
+  for(let mo=67*12; mo<=72*12; mo++){ const d=addMonthsDate(birth,mo), y=+d.slice(0,4);
+    const req=AOW_FIXED[y] ?? (y<2024?804:67*12+(+S.settings.aowLater||0)); if(mo>=req) return {date:d, months:mo, fixed:y<=AOW_FIXED_TO}; }
+  return null;
+}
+const ageTxt=mo=>Math.floor(mo/12)+' jaar'+(mo%12?' en '+(mo%12)+' maanden':'');
+function personInfo(p){ const o=(S.settings.persons||{})[p]||{}; const aow=aowInfo(o.birth); return {birth:o.birth||'', stop:o.stop||'', pension:o.pension||(aow?aow.date:''), pensionManual:!!o.pension, aow}; }
+const stopYm = d => !isDate(d) ? null : (d.slice(8)==='01' ? d.slice(0,7) : iYm(ymI(d.slice(0,7))+1));
+function expIncome(ym){ const r=expIncomeRaw(ym);
+  for(const p of S.settings.people){ const st=stopYm(((S.settings.persons||{})[p]||{}).stop); if(!st||ym<st) continue;
+    for(const c of (S.settings.workCats||[])) if(r[c] && r[c][p]!=null){ delete r[c][p]; if(!Object.keys(r[c]).length) delete r[c]; } }
+  return r;
+}
+function expIncomeRaw(ym){
+  const r={}; const add=(c,sb,v)=>{ const o=(r[c] ||= {}); o[sb]=(o[sb]||0)+v; };
+  for(const x of S.recurring) if(x.kind==='in' && dueIn(x,ym)) add(x.cat,x.person||'Samen',+x.amount);
+  for(const e of S.expected) if(e.kind==='in' && e.ym===ym) add(e.cat,'Samen',+e.amount);
+  for(const c of new Set(S.incPlan.map(p=>p.cat))){
+    const t=planEff(c,'',ym); if(t&&t.amount!=null){ r[c]={'':t.amount}; continue; }
+    for(const sb of new Set(S.incPlan.filter(p=>p.cat===c&&p.sub).map(p=>p.sub))){ const e=planEff(c,sb,ym); if(e&&e.amount!=null) (r[c] ||= {})[sb]=e.amount; }
+  }
+  return r;
+}
+const invYm = () => gridYm || iYm(ymI(curYm())-1);
+function vInvoer(){
+  if(invView==='jaar') return vInvoerJaar();
+  const ym=invYm(), c=ymI(curYm()), kind=invKind;
+  const mode = kind==='uit' ? 'act' : (invMode || (ym>curYm()?'exp':'act'));
+  const isAct = a => a.kind===kind && !isInv(a);
+  const first=Math.min(ymI('2025-01'),...S.actuals.filter(isAct).map(a=>ymI(a.date.slice(0,7))));
+  let strip='', lastY='';
+  for(let i=first;i<=c;i++){ const m=iYm(i), y=m.slice(0,4); const filled=S.actuals.some(a=>isAct(a)&&a.date.slice(0,7)===m);
+    if(y!==lastY){ strip+=`<b style="margin:0 4px 0 ${lastY?'10px':'0'};font-size:13px">${y}</b>`; lastY=y; }
+    strip+=`<button class="mchip ${filled?'f':''} ${m===ym?'on':''}" data-a="gYm" data-ym="${m}" title="${mLong(m)}${filled?' – ingevuld':' – nog leeg'}">${new Date(+y,+m.slice(5)-1,15).toLocaleDateString('nl-NL',{month:'short'}).replace('.','')}</button>`; }
+  const baseCats = kind==='uit' ? S.expCats : S.incCats;
+  const subsOf = cat => kind==='uit' ? [...(S.subCats[cat]||[])] : [...S.settings.people,'Samen'];
+  const extraCats=[...new Set(S.actuals.filter(a=>a.grid&&a.monthTotal==null&&a.kind===kind&&a.date.slice(0,7)===ym&&!baseCats.includes(a.cat)).map(a=>a.cat))];
+  const ei = kind==='in' ? expIncome(ym) : null;
+  let total=0, totalExp=0, rows='';
+  const inp=(cat,sub,val,dis)=>`<input class="gcell" data-ym="${ym}" data-kind="${kind}" data-mode="${mode}" data-cat="${esc(cat)}" data-sub="${esc(sub)}" inputmode="decimal" value="${val!=null?numIn(Math.round(val*100)/100):''}" ${dis?'readonly data-calc="1" tabindex="-1" title="Berekend uit de onderverdeling – wijzig de bedragen eronder"':''} placeholder="€">`;
+  for(const cat of [...baseCats,...extraCats]){
+    const subs=subsOf(cat);
+    let subVals, tv, catTot, extraCol='', expCol='';
+    if(mode==='act'){
+      for(const a of S.actuals) if(a.grid&&a.kind===kind&&a.cat===cat&&a.sub&&a.date.slice(0,7)===ym&&!subs.includes(a.sub)) subs.push(a.sub);
+      subVals=subs.map(sb=>gridRec(ym,cat,sb,kind)?.amount);
+      const hasSubs=subVals.some(v=>v!=null); const tr=gridRec(ym,cat,'',kind);
+      tv=hasSubs?sum(subVals):tr?.amount; const loose=looseSum(ym,cat,kind); catTot=(tv||0)+loose; total+=catTot;
+      extraCol=`<td class="n">${loose?`<button class="btn ghost sm" data-a="looseList" data-kind="${kind}" data-ym="${ym}" data-cat="${esc(cat)}" title="Bekijk of verwijder de losse invoer">${E(loose)} ›</button>${tv?'<div class="small" style="color:var(--warn)">telt op bij het bedrag</div>':''}`:''}</td>`;
+      if(kind==='in'){ const ev=ei[cat]?sum(Object.values(ei[cat])):0; totalExp+=ev; expCol=`<td class="n muted">${ev?E(ev):''}</td>`; }
+      var dis=hasSubs;
+    } else {
+      const o=ei[cat]||{};
+      subVals=subs.map(sb=>o[sb]); const hasSubs=subVals.some(v=>v!=null&&v!==0); tv = o['']!=null ? o[''] : (hasSubs?sum(subVals):null);
+      if(o['']!=null) subVals=subs.map(()=>null);
+      catTot=tv||0; total+=catTot; var dis = o['']==null && hasSubs;
+      const src=(sb)=>{ const p=planEff(cat,sb,ym); return p&&p.amount!=null?(p.only?'alleen deze maand':'eigen verwachting'):null; };
+      const s0=src(''); extraCol=`<td class="small muted">${s0?`<span class="badge">${s0}</span>`:''}</td>`;
+      subs._src=subs.map(sb=>src(sb));
+    }
+    const open=gridOpen[kind+cat]??(dis||false); const orphan=!baseCats.includes(cat);
+    rows+=`<tr class="gcat"><td>${subs.length?`<button class="btn ghost sm" data-a="gToggle" data-cat="${esc(kind+cat)}" data-open="${open?1:0}" tabindex="-1" style="padding:2px 6px">${open?'▾':'▸'}</button>`:'<span style="display:inline-block;width:26px"></span>'}<b>${esc(cat)}</b>${orphan?' <span class="badge w">oude categorie</span>':''}</td>
+      ${mode==='act'&&kind==='in'?expCol:''}<td class="n">${inp(cat,'',tv,dis)}</td>${extraCol}<td class="n"><b>${catTot?E(catTot):''}</b></td></tr>`;
+    if(open) subs.forEach((sb,j)=>{ rows+=`<tr class="gsub"><td style="padding-left:44px">${esc(sb)}</td>${mode==='act'&&kind==='in'?'<td></td>':''}<td class="n">${inp(cat,sb,subVals[j],false)}</td><td class="small muted">${mode==='exp'&&subs._src[j]?`<span class="badge">${subs._src[j]}</span>`:''}</td><td></td></tr>`; });
+  }
+  let topRow='', undRow='', totInfo='';
+  if(kind==='uit'){ const tr=monthTotalRec(ym), catSum=total; 
+    topRow=`<tr class="gtot"><td><span style="display:inline-block;width:26px"></span><b>Totaal uitgaven deze maand</b><div class="small muted" style="padding-left:26px">optioneel: vul in als je de verdeling (nog) niet weet</div></td><td class="n"><input class="gcell" data-ym="${ym}" data-kind="uit" data-mode="act" data-cat="__TOTAL__" data-sub="" inputmode="decimal" value="${tr?numIn(tr.monthTotal):''}" placeholder="€"></td><td></td><td class="n"><b>${tr?E(tr.monthTotal):''}</b></td></tr>`;
+    if(tr){ const und=tr.amount; total+=und;
+      undRow=`<tr class="gcat"><td><span style="display:inline-block;width:26px"></span><b>${UNDIST}</b> <span class="badge">rest van het totaal</span></td><td class="n"><input class="gcell" value="${numIn(Math.round(und*100)/100)}" readonly data-calc="1" tabindex="-1" data-cat="${UNDIST}" data-ym="${ym}" data-kind="uit" title="Maandtotaal min wat over de categorieën is verdeeld"></td><td></td><td class="n"><b>${und?E(und):''}</b></td></tr>`;
+      totInfo = catSum>tr.monthTotal ? `<div class="warn">De categorieën zijn samen ${E(catSum)}, dat is ${E(catSum-tr.monthTotal)} méér dan het ingevulde totaal van ${E(tr.monthTotal)}. Pas het totaal aan of maak het leeg.</div>`
+        : `<div class="small muted" style="margin:6px 0">Van het totaal van ${E(tr.monthTotal)} is ${E(catSum)} over categorieën verdeeld; ${E(und)} staat als "${UNDIST}".</div>`; } }
+  const invs=kind==='uit'?S.actuals.filter(a=>isInv(a)&&a.date.slice(0,7)===ym):[];
+  const dep=sum(S.actuals.map(a=>deprIn(a,ym)));
+  const head = mode==='act'
+    ? `<tr><th>Categorie</th>${kind==='in'?'<th class="n">Verwacht</th>':''}<th class="n">Werkelijk bedrag</th><th class="n">Losse invoer</th><th class="n">Totaal</th></tr>`
+    : `<tr><th>Categorie</th><th class="n">Verwacht bedrag</th><th>Bron</th><th class="n">Totaal</th></tr>`;
+  const info = kind==='uit'
+    ? 'Vul je subcategorieën in, dan rekent de app het totaal van de categorie zelf uit. Vul je alleen het totaal in, dan is dat ook goed. Maandtotalen worden nooit automatisch een investering. Een investering voeg je hieronder apart toe.'
+    : mode==='act'
+      ? 'Vul de netto-inkomsten in die je deze maand echt hebt ontvangen: per categorie het totaal, of per persoon. De kolom "Verwacht" toont ter vergelijking wat er verwacht werd.'
+      : `Vul de verwachte netto-inkomsten in, per categorie of per persoon. Bedragen gelden als euro's van nu; in de 30-jaarsprognose komt de inkomensgroei erbij. Leeg maken = terug naar wat bij Vaste posten staat.`;
+  return `<div class="row"><div><h1>Invoeren</h1><p class="sub">Per maand je werkelijke bedragen, en voor inkomsten ook je verwachtingen voor de komende 30 jaar. Alles wordt meteen opgeslagen.</p></div><span class="spacer"></span>
+    <div class="toggle" style="margin-right:8px"><button data-a="invView" data-v="maand" class="${invView==='maand'?'on':''}">Per maand</button><button data-a="invView" data-v="jaar" class="${invView==='jaar'?'on':''}">Jaaroverzicht</button></div><div class="toggle"><button data-a="invKind" data-v="uit" class="${kind==='uit'?'on':''}">Uitgaven</button><button data-a="invKind" data-v="in" class="${kind==='in'?'on':''}">Inkomsten</button></div></div>${demoBanner()}
+  <div class="card">${monthPicker(ym,'gYm',k=>S.actuals.some(a=>isAct(a)&&a.date.slice(0,7)===k))}<div class="small muted" style="margin-top:6px">Klik op een maand. Donkerblauw = werkelijke ${kind==='uit'?'uitgaven':'inkomsten'} al ingevuld. Wissel van jaar met ‹ › of de keuzelijst. Sneltoetsen: <b>Page Up</b> / <b>Page Down</b> voor de vorige of volgende maand.</div>
+  <div class="row" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px"><button class="btn sec sm" data-a="gPrev" title="Vorige maand">‹</button><b style="text-transform:capitalize;font-size:17px">${mLong(ym)}</b><button class="btn sec sm" data-a="gNext" title="Volgende maand">›</button>
+    ${kind==='in'?`<div class="toggle" style="margin-left:8px"><button data-a="invMode" data-v="act" class="${mode==='act'?'on':''}">Werkelijk</button><button data-a="invMode" data-v="exp" class="${mode==='exp'?'on':''}">Verwachting</button></div>`:''}
+    <span class="spacer"></span>${mode==='act'?'<button class="btn sec sm" data-a="gCopy">Bedragen van vorige maand overnemen</button>':`<label class="small" style="display:flex;gap:6px;align-items:center;font-weight:600;color:var(--b800)"><input type="checkbox" id="invFwd" ${invFwd?'checked':''}> Wijziging geldt ook voor alle maanden hierna</label>`}</div>
+    <div class="info" style="margin-top:12px">${info}</div>
+    ${totInfo}<div class="tablewrap"><table class="grid-t">${head}${topRow}${rows}${undRow}
+    <tr class="tot"><td>Totaal ${mode==='exp'?'verwacht ':''}${kind==='uit'?'uitgaven':'inkomsten'} ${mName(ym)}</td>${mode==='act'&&kind==='in'?`<td class="n muted">${E(totalExp)}</td>`:''}<td></td><td></td><td class="n">${E(total)}</td></tr></table></div>
+    ${kind==='uit'?`<p class="small muted">"Losse invoer" zijn bedragen die je los hebt ingevoerd via "Werkelijke uitgave" op de pagina Maand. Die tellen bij het maandbedrag op. De afschrijving op investeringen (deze maand ${E(dep)}) komt er in de overzichten nog bij.</p>`:''}</div>
+  ${kind==='uit'?`<div class="card"><div class="row"><h2 style="margin:0">Investeringen in ${mName(ym)}</h2><span class="spacer"></span><button class="btn sm" data-a="addAct" data-k="uit">+ Investering</button></div>
+    ${invs.length?`<table style="margin-top:10px"><tr><th>Omschrijving</th><th>Categorie</th><th class="n">Bedrag</th><th class="n">Afschrijving</th><th></th></tr>${invs.map(a=>`<tr><td>${esc(a.note||'')}</td><td>${esc(a.cat)}${a.sub?' · '+esc(a.sub):''}</td><td class="n">${E2(a.amount)}</td><td class="n">${a.months} mnd · ${E2(a.amount/a.months)} p/m</td><td class="n"><button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button><button class="btn ghost sm" data-a="delAct" data-id="${a.id}">✕</button></td></tr>`).join('')}</table>`:`<p class="muted small" style="margin-top:8px">Geen investeringen in deze maand. Uitgaven boven ${E(S.settings.threshold)} voeg je hier toe; ze worden over de door jou gekozen termijn afgeschreven.</p>`}</div>`:''}`;
+}
+/* ---------- Snelle maandkiezer ---------- */
+const MN=['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'];
+function monthPicker(ym,act,filledFn){
+  const y=+ym.slice(0,4), m=ym.slice(5), cy=curY();
+  const firstY=Math.min(2025,...S.actuals.map(a=>+a.date.slice(0,4)),...S.meas.map(x=>+x.date.slice(0,4)));
+  const years=[]; for(let i=firstY;i<=cy+30;i++) years.push(i);
+  const chips=MN.map((n,i)=>{ const k=y+'-'+pad(i+1); const f=filledFn&&filledFn(k);
+    return `<button class="mchip ${f?'f':''} ${k===ym?'on':''} ${k>curYm()?'fut':''} ${k===curYm()?'now':''}" data-a="${act}" data-ym="${k}" title="${mLong(k)}${f?' – ingevuld':''}">${n}</button>`; }).join('');
+  return `<div class="mp"><div class="mp-y"><button class="btn sec sm" data-a="${act}" data-ym="${y-1}-${m}" title="Vorig jaar">‹</button>
+    <select class="mpYear" data-act="${act}" data-m="${m}" aria-label="Jaar">${years.map(v=>`<option ${v===y?'selected':''}>${v}</option>`).join('')}</select>
+    <button class="btn sec sm" data-a="${act}" data-ym="${y+1}-${m}" title="Volgend jaar">›</button></div>
+    <div class="mp-m">${chips}</div>
+    <button class="btn ghost sm" data-a="${act}" data-ym="${curYm()}" title="Naar deze maand">Vandaag</button></div>`;
+}
+/* ---------- Analyse ---------- */
+const CAT_COLORS=['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#6250d6'], REST_COLOR='#9aa3af';
+function anMonths(){
+  const c=ymI(curYm());
+  const rng=(a,b)=>{ const r=[]; for(let i=a;i<=b;i++) r.push(iYm(i)); return r; };
+  const lm=anPer.match(/^last(\d+)$/); if(lm) return rng(c-(+lm[1]),c-1);
+  if(anPer==='all'){ const ms=S.actuals.filter(a=>!isInv(a)).map(a=>ymI(a.date.slice(0,7))); return rng(ms.length?Math.min(...ms):c-12, c); }
+  if(anPer==='custom'){ let f=ymI(anFrom||iYm(c-12)), t=ymI(anTo||iYm(c-1)); if(f>t) [f,t]=[t,f]; return rng(f,Math.min(t,f+239)); }
+  if(anPer==='month') return [anYm||iYm(c-1)];
+  const y=+anPer, a=[]; for(let m=1;m<=12;m++){ const ym=y+'-'+pad(m); if(ym<=curYm()) a.push(ym); } return a;
+}
+function anData(kind,months){
+  const set=new Set(months), cats={}, byMonth={};
+  const add=(ym,cat,sub,v)=>{ const o=(cats[cat] ||= {total:0,subs:{}}); o.total+=v; if(sub!=null) o.subs[sub]=(o.subs[sub]||0)+v;
+    const m=(byMonth[ym] ||= {}); m[cat]=(m[cat]||0)+v; const ms=(byMonth[ym+'|'+cat] ||= {}); if(sub!=null) ms[sub]=(ms[sub]||0)+v; };
+  for(const a of S.actuals){ if(a.kind!==kind||isInv(a)) continue; const ym=a.date.slice(0,7); if(!set.has(ym)) continue;
+    const hasSubs = kind==='in' || (S.subCats[a.cat]||[]).length>0 || !!a.sub;
+    add(ym,a.cat, hasSubs ? (a.sub || (kind==='in'?'Niet verdeeld':'Zonder subcategorie')) : null, +a.amount); }
+  if(kind==='uit') for(const ym of months){ const d=sum(S.actuals.map(a=>deprIn(a,ym))); if(d>0) add(ym,AFS,null,d); }
+  const filled=months.filter(ym=>byMonth[ym]);
+  return {cats,byMonth,filled,total:sum(Object.values(cats).map(o=>o.total))};
+}
+function catColor(kind,cat){ const list=kind==='uit'?[...S.expCats,AFS]:S.incCats; const i=list.indexOf(cat); return i>=0&&i<CAT_COLORS.length?CAT_COLORS[i]:REST_COLOR; }
+function rankedBars(kind,d){
+  const rows=Object.entries(d.cats).sort((a,b)=>b[1].total-a[1].total); if(!rows.length) return '<p class="muted">Geen werkelijke bedragen in deze periode.</p>';
+  const max=rows[0][1].total;
+  return `<div class="rank">${rows.map(([cat,o])=>{ const pctv=d.total?o.total/d.total:0; let subs=Object.entries(o.subs).sort((a,b)=>b[1]-a[1]); if(subs.length===1&&/^(Zonder|Niet verdeeld)/.test(subs[0][0])) subs=[];
+    const foc=anFocus===cat;
+    return `<div class="rk ${foc?'foc':''}" data-a="anFocus" data-cat="${esc(cat)}" data-tip="${esc(cat)}: ${esc(E(o.total))} · ${P(pctv)} van het totaal${subs.length?' · klik voor het verloop per subcategorie':''}">
+      <div class="rk-l"><i style="background:${catColor(kind,cat)}"></i>${esc(cat)}</div>
+      <div class="rk-b"><div class="rk-f" style="width:${(o.total/max*100).toFixed(2)}%"></div></div>
+      <div class="rk-v">${E(o.total)}<span>${P(pctv)}</span></div></div>
+      ${anSubs&&subs.length?subs.map(([sb,v])=>`<div class="rk sub" data-tip="${esc(cat)} › ${esc(sb)}: ${esc(E(v))} · ${P(o.total?v/o.total:0)} van ${esc(cat)}">
+        <div class="rk-l">${esc(sb)}</div><div class="rk-b"><div class="rk-f" style="width:${(v/max*100).toFixed(2)}%"></div></div><div class="rk-v">${E(v)}<span>${P(o.total?v/o.total:0)}</span></div></div>`).join(''):''}`; }).join('')}</div>`;
+}
+function stackChart({labels,series,h=260,W=760,totals=false,step=0}){
+  const pl=64,pr=10,pt=10,pb=28, n=labels.length; let H=h;
+  const totals_=totals; const totals2=labels.map((_,i)=>sum(series.map(s=>s.values[i]||0)));
+  if(!n||!Math.max(0,...totals2)) return '<p class="muted">Geen gegevens om te tonen.</p>';
+  const band=(W-pl-pr)/n, horiz=band>=46, mx=Math.max(...totals2);
+  let ticks;
+  if(step && mx/step<=60){ const top=Math.ceil(mx*1.02/step)*step; ticks=[]; for(let v=0;v<=top+1e-6;v+=step) ticks.push(v); H=Math.max(h, pt+pb+(ticks.length-1)*16); }
+  else ticks=niceTicks(0,mx*(totals_?(horiz?1.08:1.22):1));
+  const hi=ticks[ticks.length-1], y=v=>pt+(H-pt-pb)*(1-v/hi), bw=Math.min(36,band*.66);
+  const kfmt=v=>v===0?'€ 0':'€ '+(v/1000).toLocaleString('nl-NL',{maximumFractionDigits:1})+'K';
+  let g=''; for(const t of ticks){ const major=!step||t%(step*2)===0; g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(t)}" y2="${y(t)}" stroke="${t===0?'#b8c7dc':major?'#dfe6ef':'#edf1f7'}"/><text x="${pl-8}" y="${y(t)+4}" text-anchor="end" font-size="${step?10.5:11}" fill="${major?'#5a6b85':'#8a97ab'}">${esc(step?kfmt(t):eurC.format(t))}</text>`; }
+  labels.forEach((l,i)=>{ const x=pl+i*band+(band-bw)/2; let acc=0; const segs=series.filter(s=>(s.values[i]||0)>0);
+    segs.forEach((s,k)=>{ const v=s.values[i]; const y0=y(acc), y1=y(acc+v); const top=k===segs.length-1; const hgt=Math.max(0,y0-y1);
+      g+= top ? `<path d="M${x} ${y0} V${y1+Math.min(4,hgt)} Q${x} ${y1} ${x+4} ${y1} H${x+bw-4} Q${x+bw} ${y1} ${x+bw} ${y1+Math.min(4,hgt)} V${y0} Z" fill="${s.color}" data-tip="${esc(l)} · ${esc(s.name)}: ${esc(E(v))}&#10;Totaal staaf: ${esc(E(totals2[i]))}"/>`
+              : `<rect x="${x}" y="${y1}" width="${bw}" height="${hgt}" fill="${s.color}" data-tip="${esc(l)} · ${esc(s.name)}: ${esc(E(v))}&#10;Totaal staaf: ${esc(E(totals2[i]))}"/>`;
+      if(k>0) g+=`<line x1="${x}" x2="${x+bw}" y1="${y0}" y2="${y0}" stroke="#fff" stroke-width="0.6" pointer-events="none"/>`;
+      acc+=v; });
+    g+=`<rect x="${pl+i*band}" y="${pt}" width="${band}" height="${H-pt-pb}" fill="transparent" data-tip="${esc(l)} · totaal ${esc(E(totals2[i]))}" style="pointer-events:${segs.length?'none':'all'}"/>`;
+    if(totals_&&totals2[i]>0){ const cx=pl+i*band+band/2, ty=y(totals2[i])-5, lbl=esc(horiz?E(totals2[i]):eurC.format(totals2[i]));
+      g+= horiz ? `<text x="${cx}" y="${ty}" text-anchor="middle" font-size="11" font-weight="700" fill="#10213a" data-tip="${esc(l)} · totaal ${esc(E(totals2[i]))}">${lbl}</text>`
+                : `<text transform="translate(${cx+3.5},${ty}) rotate(-90)" text-anchor="start" font-size="10" font-weight="700" fill="#10213a" data-tip="${esc(l)} · totaal ${esc(E(totals2[i]))}">${lbl}</text>`; }
+    const ev=Math.max(1,Math.ceil(n/(W>600?14:7))); if(i%ev===0) g+=`<text x="${pl+i*band+band/2}" y="${H-9}" text-anchor="middle" font-size="11" fill="#5a6b85">${esc(l)}</text>`; });
+  const leg=series.filter(s=>s.values.some(v=>v>0)).map(s=>`<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img">${g}</svg></div><div class="legend">${leg}</div>`;
+}
+function vAnalyse(){
+  const kind=anKind, months=anMonths(), d=anData(kind,months), c=ymI(curYm());
+  const years=[...new Set(S.actuals.map(a=>a.date.slice(0,4)))].filter(y=>y<=String(curY())).sort().reverse();
+  const nm=Math.max(1,d.filled.length), top=Object.entries(d.cats).sort((a,b)=>b[1].total-a[1].total)[0];
+  const list=kind==='uit'?[...S.expCats,AFS]:S.incCats;
+  const allCats=[...new Set([...list,...Object.keys(d.cats)])];
+  const main=allCats.filter(ct=>catColor(kind,ct)!==REST_COLOR), rest=allCats.filter(ct=>catColor(kind,ct)===REST_COLOR);
+  const series=[...main.map(ct=>({name:ct,color:catColor(kind,ct),values:months.map(ym=>d.byMonth[ym]?.[ct]||0)}))];
+  if(rest.length) series.push({name:rest.length===1?rest[0]:'Overige ('+rest.join(', ')+')',color:REST_COLOR,values:months.map(ym=>sum(rest.map(ct=>d.byMonth[ym]?.[ct]||0)))});
+  const labels=months.map(mName);
+  let focusHtml='';
+  if(anFocus && d.cats[anFocus]){
+    const subs=Object.entries(d.cats[anFocus].subs).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
+    const pal=['#0b2545','#1d5fbf','#5b8fd9','#93b8ea','#c4d8f3','#3d7cc9','#27496d'];
+    const fs = subs.length ? subs.map((sb,i)=>({name:sb,color:pal[i%pal.length],values:months.map(ym=>d.byMonth[ym+'|'+anFocus]?.[sb]||0)}))
+                           : [{name:anFocus,color:catColor(kind,anFocus),values:months.map(ym=>d.byMonth[ym]?.[anFocus]||0)}];
+    focusHtml=`<div class="card"><div class="row"><h2 style="margin:0;font-size:16px"><i class="sw" style="background:${catColor(kind,anFocus)}"></i>${esc(anFocus)}${subs.length?(kind==='in'?' per persoon':' per subcategorie'):' per maand'}</h2><span class="spacer"></span><button class="btn ghost sm" data-a="anFocus" data-cat="">Sluiten ✕</button></div>
+      <p class="small muted">Totaal ${E(d.cats[anFocus].total)} · gemiddeld ${E(d.cats[anFocus].total/nm)} per maand</p>${months.length>1?stackChart({labels,series:fs,h:300,W:470,step:500}):''}${rankedBars(kind,{cats:Object.fromEntries(Object.entries(d.cats[anFocus].subs).map(([k,v])=>[k,{total:v,subs:{}}])),total:d.cats[anFocus].total}).replace(/data-a="anFocus"/g,'').replace(/<i style="background:[^"]*"><\/i>/g,'')}</div>`;
+  }
+  const what=kind==='uit'?'uitgaven':'inkomsten';
+  return `<div class="row"><div><h1>Analyse</h1><p class="sub">Waar het geld naartoe gaat en waar het vandaan komt, op basis van de werkelijke bedragen.</p></div></div>${demoBanner()}
+  <div class="card filters"><div class="row">
+    <div class="toggle"><button data-a="anKind" data-v="uit" class="${kind==='uit'?'on':''}">Uitgaven</button><button data-a="anKind" data-v="in" class="${kind==='in'?'on':''}">Inkomsten</button></div>
+    <select id="anPer" style="padding:7px 10px;border:1px solid var(--line);border-radius:9px">${[['last3','Laatste 3 maanden'],['last6','Laatste 6 maanden'],['last12','Laatste 12 maanden'],['last24','Laatste 24 maanden'],['all','Alles']].map(([v,l])=>`<option value="${v}" ${anPer===v?'selected':''}>${l}</option>`).join('')}${years.map(y=>`<option value="${y}" ${anPer===y?'selected':''}>Jaar ${y}${+y===curY()?' (tot nu)':''}</option>`).join('')}<option value="month" ${anPer==='month'?'selected':''}>Eén maand…</option><option value="custom" ${anPer==='custom'?'selected':''}>Eigen periode…</option></select>
+    ${anPer==='custom'?`<span class="small" style="font-weight:600;color:var(--b800)">van</span><input id="anFrom" class="mnl" inputmode="numeric" placeholder="mm-jjjj" value="${ymToNl(anFrom||iYm(c-12))}" style="padding:6px 10px;border:1px solid var(--line);border-radius:9px;width:100px"><span class="small" style="font-weight:600;color:var(--b800)">t/m</span><input id="anTo" class="mnl" inputmode="numeric" placeholder="mm-jjjj" value="${ymToNl(anTo||iYm(c-1))}" style="padding:6px 10px;border:1px solid var(--line);border-radius:9px;width:100px">`:''}
+    ${anPer==='month'?`<input id="anYm" class="mnl" inputmode="numeric" value="${ymToNl(anYm||iYm(c-1))}" placeholder="mm-jjjj" style="padding:6px 10px;border:1px solid var(--line);border-radius:9px;width:110px">`:''}
+    <label class="small" style="display:flex;gap:6px;align-items:center;font-weight:600;color:var(--b800)"><input type="checkbox" id="anSubs" ${anSubs?'checked':''}> Subcategorieën tonen</label>
+  </div></div>
+  <div class="grid g3">
+    <div class="tile"><div class="lbl">Totaal ${what}</div><div class="val">${E(d.total)}</div><div class="note">${months.length===1?mLong(months[0]):`${mName(months[0])} t/m ${mName(months[months.length-1])}`}</div></div>
+    <div class="tile alt"><div class="lbl">Gemiddeld per maand</div><div class="val">${E(d.total/nm)}</div><div class="note">over ${d.filled.length} maand${d.filled.length===1?'':'en'} met invoer</div></div>
+    <div class="tile alt3"><div class="lbl">Grootste categorie</div><div class="val" style="font-size:20px">${top?esc(top[0]):'–'}</div><div class="note">${top?E(top[1].total)+' · '+P(d.total?top[1].total/d.total:0)+' van het totaal':''}</div></div>
+  </div>
+  ${months.length>1?`<div class="card" style="margin-top:16px"><h2>${kind==='uit'?'Uitgaven':'Inkomsten'} per maand, per categorie</h2><p class="small muted">Beweeg over een blok voor het bedrag.</p>${stackChart({labels,series,h:280,step:500})}</div>`:''}
+  <div class="grid angrid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr);${months.length>1?'':'margin-top:16px'}">
+    <div class="card"><h2>${kind==='uit'?'Uitgaven':'Inkomsten'} per categorie</h2><p class="small muted">Van groot naar klein${kind==='in'?', per persoon uitgesplitst':', met de subcategorieën eronder'}. Klik op een categorie voor het verloop.</p>${rankedBars(kind,d)}</div>
+    <div class="anside">${focusHtml||`<div class="card"><h2>Verloop van één categorie</h2><p class="muted small">Klik op een categorie om hier het verloop per maand te zien${kind==='in'?', uitgesplitst per persoon':', uitgesplitst per subcategorie'}.</p></div>`}</div>
+  </div>
+  ${kind==='uit'?'<p class="small muted">Afschrijving is de maandelijkse verdeling van investeringen, geen betaling. Investeringen zelf tellen hier niet als uitgave.</p>':''}`;
+}
+function vInvoerJaar(){
+  const kind=invKind, y=+invYm().slice(0,4), months=MN.map((_,i)=>y+'-'+pad(i+1));
+  const mode = kind==='uit' ? 'act' : (invMode || (y>curY()?'exp':'act'));
+  const baseCats = kind==='uit' ? S.expCats : S.incCats;
+  const subsOf = cat => kind==='uit' ? [...(S.subCats[cat]||[])] : [...S.settings.people,'Samen'];
+  const extra=[...new Set(S.actuals.filter(a=>a.grid&&a.monthTotal==null&&a.kind===kind&&a.date.slice(0,4)===String(y)&&!baseCats.includes(a.cat)).map(a=>a.cat))];
+  const eis = kind==='in' ? Object.fromEntries(months.map(m=>[m,expIncome(m)])) : null;
+  const cell=(cat,subs,ym)=>{
+    if(mode==='act'){ const sv=subs.map(sb=>gridRec(ym,cat,sb,kind)?.amount); const hs=sv.some(v=>v!=null); const tr=gridRec(ym,cat,'',kind)?.amount;
+      return {sv, tv:hs?sum(sv):tr, dis:hs, loose:looseSum(ym,cat,kind)}; }
+    const o=eis[ym][cat]||{}; let sv=subs.map(sb=>o[sb]); const hs=sv.some(v=>v!=null&&v!==0);
+    const tv=o['']!=null?o['']:(hs?sum(sv):null); if(o['']!=null) sv=subs.map(()=>null); return {sv,tv,dis:o['']==null&&hs,loose:0};
+  };
+  const inp=(cat,sub,ym,val,dis,loose)=>`<input class="gcell yc" data-ym="${ym}" data-kind="${kind}" data-mode="${mode}" data-cat="${esc(cat)}" data-sub="${esc(sub)}" inputmode="decimal" value="${val!=null?numIn(Math.round(val*100)/100):''}" ${dis?'readonly data-calc="1" tabindex="-1"':''} title="${esc(cat)}${sub?' › '+esc(sub):''} · ${mLong(ym)}${dis?' (berekend uit de onderverdeling)':''}${loose?' · plus losse invoer '+E(loose):''}">${loose?'<i class="ldot" title="Plus losse invoer: '+esc(E(loose))+'"></i>':''}`;
+  const colTot=months.map(()=>0); let rows='';
+  for(const cat of [...baseCats,...extra]){
+    const subs=subsOf(cat);
+    if(mode==='act') for(const a of S.actuals) if(a.grid&&a.kind===kind&&a.cat===cat&&a.sub&&a.date.slice(0,4)===String(y)&&!subs.includes(a.sub)) subs.push(a.sub);
+    const cs=months.map(m=>cell(cat,subs,m)); const anySub=cs.some(c=>c.dis);
+    const open=gridOpen[kind+cat]??anySub; const rowTot=sum(cs.map(c=>(c.tv||0)+c.loose));
+    cs.forEach((c,i)=>colTot[i]+=(c.tv||0)+c.loose);
+    rows+=`<tr class="gcat"><th class="yname">${subs.length?`<button class="btn ghost sm" data-a="gToggle" data-cat="${esc(kind+cat)}" data-open="${open?1:0}" tabindex="-1" style="padding:1px 5px">${open?'▾':'▸'}</button>`:'<span style="display:inline-block;width:22px"></span>'}${esc(cat)}</th>${cs.map((c,i)=>`<td>${inp(cat,'',months[i],c.tv,c.dis,c.loose)}</td>`).join('')}<td class="n ytot">${rowTot?E(rowTot):''}</td></tr>`;
+    if(open) subs.forEach((sb,j)=>{ const st=sum(cs.map(c=>c.sv[j]||0));
+      rows+=`<tr class="gsub"><th class="yname sub" title="${esc(sb)}">${esc(sb)}</th>${cs.map((c,i)=>`<td>${inp(cat,sb,months[i],c.sv[j],false,0)}</td>`).join('')}<td class="n ytot muted">${st?E(st):''}</td></tr>`; });
+  }
+  let ytop='', yund='';
+  if(kind==='uit'){ const trs=months.map(monthTotalRec);
+    ytop=`<tr class="gtot"><th class="yname" title="Optioneel: het totaal van alle uitgaven in die maand">Totaal maand</th>${months.map((m,i)=>`<td><input class="gcell yc" data-ym="${m}" data-kind="uit" data-mode="act" data-cat="__TOTAL__" data-sub="" inputmode="decimal" value="${trs[i]?numIn(trs[i].monthTotal):''}" title="Totaal uitgaven ${mLong(m)} – optioneel"></td>`).join('')}<td></td></tr>`;
+    if(trs.some(Boolean)){ yund=`<tr class="gcat"><th class="yname">${UNDIST}</th>${months.map((m,i)=>{ const t=trs[i]; if(t) colTot[i]+=t.amount; return `<td>${t?`<input class="gcell yc" readonly data-calc="1" tabindex="-1" data-ym="${m}" data-kind="uit" data-cat="${UNDIST}" value="${numIn(Math.round(t.amount*100)/100)}" title="Rest van het maandtotaal">`:''}</td>`; }).join('')}<td class="n ytot">${E(sum(trs.map(t=>t?t.amount:0)))}</td></tr>`; } }
+  const filled=months.filter(m=>S.actuals.some(a=>a.kind===kind&&!isInv(a)&&a.date.slice(0,7)===m)).length;
+  return `<div class="row"><div><h1>Invoeren</h1><p class="sub">Jaaroverzicht: alle maanden naast elkaar. Klik in een vakje om een bedrag te wijzigen; alles wordt meteen opgeslagen.</p></div><span class="spacer"></span>
+    ${`<div class="toggle" style="margin-right:8px"><button data-a="invView" data-v="maand">Per maand</button><button data-a="invView" data-v="jaar" class="on">Jaaroverzicht</button></div>`}<div class="toggle"><button data-a="invKind" data-v="uit" class="${kind==='uit'?'on':''}">Uitgaven</button><button data-a="invKind" data-v="in" class="${kind==='in'?'on':''}">Inkomsten</button></div></div>${demoBanner()}
+  <div class="card"><div class="row"><button class="btn sec sm" data-a="gYear" data-d="-1" title="Vorig jaar">‹</button><b style="font-size:18px">${y}</b><button class="btn sec sm" data-a="gYear" data-d="1" title="Volgend jaar">›</button>
+    <span class="small muted">${mode==='act'?`${filled} van de 12 maanden ingevuld`:'verwachte bedragen'}</span>
+    ${kind==='in'?`<div class="toggle" style="margin-left:8px"><button data-a="invMode" data-v="act" class="${mode==='act'?'on':''}">Werkelijk</button><button data-a="invMode" data-v="exp" class="${mode==='exp'?'on':''}">Verwachting</button></div>`:''}
+    <span class="spacer"></span>${mode==='exp'?`<label class="small" style="display:flex;gap:6px;align-items:center;font-weight:600;color:var(--b800)"><input type="checkbox" id="invFwd" ${invFwd?'checked':''}> Wijziging geldt ook voor alle maanden hierna</label>`:''}</div>
+    <div class="small muted" style="margin:8px 0 10px">Navigeren: <b>Tab</b> = volgende maand, <b>Enter</b> of <b>↓ ↑</b> = categorie eronder/erboven. Een gestippeld vakje wordt berekend uit de subcategorieën. Een blauwe stip betekent dat er ook losse invoer is.</div>
+    <div class="ywrap"><table class="ytab"><thead><tr><th class="yname">Categorie</th>${months.map(m=>`<th class="${m===curYm()?'ynow':''}"><a href="#invoer" data-a="gOpenMonth" data-ym="${m}" title="Open ${mLong(m)}">${MN[+m.slice(5)-1]}</a></th>`).join('')}<th class="n">Totaal</th></tr></thead>
+    <tbody>${ytop}${rows}${yund}</tbody>
+    <tfoot><tr><th class="yname">Totaal</th>${colTot.map(v=>`<td class="n">${v?E(v):''}</td>`).join('')}<td class="n"><b>${E(sum(colTot))}</b></td></tr></tfoot></table></div></div>`;
+}
+function looseModal(kind,ym,cat){
+  const items=S.actuals.filter(a=>!a.grid&&a.kind===kind&&!isInv(a)&&a.date.slice(0,7)===ym&&a.cat===cat);
+  if(!items.length){ closeModal(); render(); return; }
+  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal"><h3>Losse invoer: ${esc(cat)}, ${mLong(ym)}</h3>
+    <div class="info">Dit zijn bedragen die los zijn ingevoerd, bijvoorbeeld via "Werkelijke ${kind==='in'?'inkomst':'uitgave'}" op de pagina Maand. Ze tellen <b>op</b> bij het bedrag dat je bij Invoeren hebt ingevuld. Staat hetzelfde bedrag op beide plekken, verwijder het dan hier.</div>
+    <table><tr><th>Datum</th><th>Omschrijving</th><th class="n">Bedrag</th><th></th></tr>${items.map(a=>`<tr><td>${dNl(a.date)}</td><td>${esc(a.note||'')}${a.sub?' · '+esc(a.sub):''}</td><td class="n">${E2(a.amount)}</td><td class="n"><button class="btn danger sm" data-a="looseDel" data-id="${a.id}" data-kind="${kind}" data-ym="${ym}" data-cat="${esc(cat)}">Verwijderen</button></td></tr>`).join('')}</table>
+    <div class="actions"><button class="btn sec" id="lmClose">Sluiten</button></div></div></div>`;
+  $('#lmClose').onclick=()=>{ closeModal(); keepScroll(); };
+  $('#ov').addEventListener('mousedown',e=>{ if(e.target.id==='ov'){ closeModal(); keepScroll(); } });
+}
+function vVast(){
+  const row=r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.cat)}</td><td>${esc(r.person||'Samen')}</td><td class="n">${E2(r.amount)}</td><td>${FREQ[r.freq]}</td><td>${mName(r.start)}</td><td>${r.end?mName(r.end):'<span class="muted">doorlopend</span>'}</td><td>${esc(r.day||'')}</td><td class="n"><button class="btn ghost sm" data-a="editRec" data-id="${r.id}">Bewerk</button><button class="btn ghost sm" data-a="delRec" data-id="${r.id}">✕</button></td></tr>`;
+  const tbl=k=>{ const rs=S.recurring.filter(r=>r.kind===k).sort((a,b)=>a.cat.localeCompare(b.cat)||(a.start<b.start?-1:1)); return rs.length?`<div class="tablewrap"><table><tr><th>Omschrijving</th><th>Categorie</th><th>Persoon</th><th class="n">Bedrag</th><th>Frequentie</th><th>Vanaf</th><th>Tot en met</th><th>Dag</th><th></th></tr>${rs.map(row).join('')}</table></div>`:'<p class="muted">Nog niets vastgelegd.</p>'; };
+  const ev=calendarEvents();
+  return `<h1>Vaste posten</h1><p class="sub">Terugkerende netto-inkomsten en vaste lasten maken automatisch verwachtingen aan. Ze worden nooit vanzelf als betaald of ontvangen gemarkeerd.</p>${demoBanner()}
+  <div class="card"><div class="row"><h2 style="margin:0">Vaste inkomsten</h2><span class="spacer"></span><button class="btn sm" data-a="addRec" data-k="in">+ Vaste inkomst</button></div><div style="margin-top:10px">${tbl('in')}</div></div>
+  <div class="card"><div class="row"><h2 style="margin:0">Vaste lasten</h2><span class="spacer"></span><button class="btn sm" data-a="addRec" data-k="uit">+ Vaste last</button></div><div style="margin-top:10px">${tbl('uit')}</div></div>
+  <div class="card"><h2>Kalender: wijzigingen en aflopende verplichtingen (komende 12 maanden)</h2><div class="cal">${ev.length?ev.map(e=>`<div class="ev"><div class="dt">${e.yearOnly?e.ym.slice(0,4):mName(e.ym)}</div><div style="flex:1">${esc(e.txt)} <span class="badge ${e.badge==='loopt af'?'w':''}">${esc(e.badge)}</span></div><div class="n ${e.kind==='in'?'pos':''}">${E2(e.amt)}</div></div>`).join(''):'<p class="muted">Geen wijzigingen in de komende 12 maanden.</p>'}</div></div>`;
+}
+function vInvesteringen(){
+  const inv=S.actuals.filter(isInv).sort((a,b)=>a.date<b.date?1:-1), c=ymI(curYm());
+  const rows=inv.map(a=>{ const s=ymI(a.date.slice(0,7)), n=+a.months, done=Math.min(n,Math.max(0,c-s+1)), per=a.amount/n;
+    return `<tr><td>${esc(a.note||'')}<div class="small muted">${esc(a.cat)}</div></td><td>${dNl(a.date)}</td><td class="n">${E2(a.amount)}</td><td class="n">${n} mnd</td><td class="n">${E2(per)}</td><td class="n">${E(per*done)}</td><td class="n">${E(a.amount-per*done)}</td><td>${done>=n?'<span class="badge g">afgeschreven</span>':done===0?'<span class="badge">start later</span>':`<span class="badge">${done}/${n}</span>`}</td><td class="n"><button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button></td></tr>`; }).join('');
+  const thisM=sum(inv.map(a=>deprIn(a,curYm())));
+  return `<div class="row"><div><h1>Investeringen en afschrijving</h1><p class="sub">Uitgaven boven <b>${E(S.settings.threshold)}</b> (grensbedrag, instelbaar) worden investeringen${S.settings.noInvCats.length?`, behalve in ${S.settings.noInvCats.map(esc).join(', ')}`:''}. Afschrijving deze maand: <b>${E2(thisM)}</b>.</p></div><span class="spacer"></span><button class="btn" data-a="addAct" data-k="uit">+ Investering / uitgave</button></div>${demoBanner()}
+  <div class="info">De <b>betaling</b> is een geldbeweging: die zie je terug in je rekeningsaldi. De <b>afschrijving</b> verdeelt de kosten in gelijke delen over de maanden, vanaf de maand van betaling, en is geen nieuwe betaling. In het uitgavenoverzicht telt alleen de afschrijving mee, zodat niets dubbel wordt geteld.</div>
+  <div class="card">${inv.length?`<div class="tablewrap"><table><tr><th>Omschrijving</th><th>Betaald op</th><th class="n">Bedrag</th><th class="n">Termijn</th><th class="n">Per maand</th><th class="n">Afgeschreven</th><th class="n">Resterend</th><th>Status</th><th></th></tr>${rows}</table></div>`:'<p class="muted">Nog geen investeringen.</p>'}</div>`;
+}
+function vRendement(){
+  const years=[...new Set(S.meas.map(m=>+m.date.slice(0,4)).concat(S.histRend.map(h=>+h.year)))].sort(); if(!years.includes(curY())) years.push(curY());
+  const ys=years.slice(-6);
+  const cell=r=>r?`${P(r.pct)}${r.manual?' <span class="badge">handmatig</span>':r.received?(r.partial?' <span class="badge g">ontvangen tot nu</span>':' <span class="badge g">ontvangen</span>'):r.expected?' <span class="badge">verwacht</span>':r.calc?' <span class="badge">berekend</span>':r.partial?' <span class="badge w">tot nu</span>':''}${r.eur!=null?`<div class="small muted">${E(r.eur)}</div>`:''}`:'<span class="muted">–</span>';
+  return `<div class="row"><div><h1>Rendement</h1><p class="sub">Per rekening en voor het totale vermogen.</p></div><span class="spacer"></span><button class="btn" data-a="addHR">+ Rendement handmatig</button></div>${demoBanner()}
+  <div class="info"><b>Zo rekent de app:</b> bij rekeningen met rente telt eerst de rente die je echt hebt ontvangen. Zonder ontvangen rente schat de app: elk ingevoerd saldo geldt tot de volgende meting en elk rentepercentage tot de volgende wijziging, net als bij de bank per dag. Voor de rest van het lopende jaar rekent de app met het laatste saldo. Het percentage is de rente gedeeld door het gemiddelde saldo. Bij goud, crypto en beleggingen is het de waardestijging tussen het begin en het eind van het jaar, gecorrigeerd voor aan- en verkopen. Bijgestort geld telt dus niet als winst. Het totaal is de som van het rendement in euro's, gedeeld door het vermogen waarover dat rendement is behaald.</div>
+  <div class="card tablewrap"><table><tr><th>Rekening</th>${ys.map(y=>`<th class="n">${y}</th>`).join('')}</tr>
+    ${S.accounts.map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
+    <tr class="tot"><td>Totaal vermogen</td>${ys.map(y=>`<td class="n">${cell(totalRend(y))}</td>`).join('')}</tr></table></div>
+  ${savingsBlock()}
+  ${S.histRend.length?`<div class="card"><h2>Handmatig ingevoerd</h2><table><tr><th>Jaar</th><th>Rekening</th><th class="n">Rendement</th><th></th></tr>${S.histRend.slice().sort((a,b)=>b.year-a.year).map(h=>`<tr><td>${h.year}</td><td>${h.acc?esc(accById(h.acc)?.name||'(verwijderd)'):'Totaal vermogen'}</td><td class="n">${numIn(h.pct)}%</td><td class="n"><button class="btn ghost sm" data-a="delHR" data-id="${h.id}">✕</button></td></tr>`).join('')}</table></div>`:''}`;
+}
+function savingsBlock(){
+  const accs=S.accounts.filter(a=>hasRate(a)||(TYPES[a.type].rente&&a.inleg)).map(a=>({a,fc:savingsForecast(a)})).filter(x=>x.fc);
+  if(!accs.length) return '';
+  const labels=accs[0].fc.rows.map(r=>mName(r.ym));
+  return `<div class="card"><h2>Vooruitblik renterekeningen: komende 24 maanden</h2>
+  <p class="small muted">Start bij het laatst ingevoerde saldo. Per maand komt de verwachte inleg erbij, en de rente wordt bijgeschreven volgens de uitkeringsfrequentie. Rente die al is bijgeschreven levert dan zelf ook rente op. Geplande rentewijzigingen tellen mee vanaf hun ingangsdatum. Bij uitkering per kwartaal of per jaar rekent de app met de maand van de uitkeringsdatum (zonder datum: december).</p>
+  <div class="tablewrap"><table><tr><th>Rekening</th><th class="n">Saldo nu</th><th class="n">Inleg p/m</th><th class="n">Rente nu</th><th class="n">Rente komende 12 mnd</th><th class="n">Saldo over 12 mnd</th><th class="n">Saldo over 24 mnd</th></tr>
+  ${accs.map(({a,fc})=>`<tr><td>${esc(a.name)}<div class="small muted">saldo van ${dNl(fc.start.date)}</div></td><td class="n">${E(fc.start.value)}</td><td class="n">${a.inleg?E(a.inleg):'–'}</td><td class="n">${numIn(rateAt(a,todayStr()))}%</td><td class="n"><b>${E(fc.int12)}</b></td><td class="n">${E(fc.rows[11].bal)}</td><td class="n">${E(fc.rows[23].bal)}</td></tr>`).join('')}</table></div>
+  ${lineChart({labels,series:accs.map(({a,fc},i)=>({name:a.name,values:fc.rows.map(r=>r.bal),color:COLORS[i%COLORS.length]})),h:220})}</div>`;
+}
+function vPrognose(){
+  const pr=prognosis(), real=S.settings.real, R=(v,row)=>real?v/row.infF:v;
+  const labels=pr.rows.map(r=>String(r.y));
+  const cats=[...new Set(pr.rows.flatMap(r=>Object.keys(r.incByCat)))];
+  const incDec=(S.settings.incView||'dec')==='dec';
+  const RAMPS=[['#0b2545','#1d5fbf','#5b8fd9','#93b8ea','#c4d8f3'],['#8a3510','#eb6834','#f2956b','#f7bea2','#fbdccb'],['#3f4a5a','#6b7685','#9aa3af','#c3c9d1','#e1e5ea']];
+  const catOrder=[...S.incCats.filter(c=>cats.includes(c)), ...cats.filter(c=>!S.incCats.includes(c))];
+  const persons=[...S.settings.people, 'Samen', 'Samen (categorietotaal)'].filter(pp=>pr.rows.some(r=>Object.keys(r.incByPC).some(k=>k.startsWith(pp+'|'))));
+  const pRamp=pp=>{ const i=S.settings.people.indexOf(pp); return RAMPS[i>=0&&i<2?i:2]; };
+  const incSeries=[]; const legendGroups=[];
+  for(const pp of persons){ const items=[];
+    catOrder.forEach((c,ci)=>{ const vals=pr.rows.map(r=>R(incDec?(r.decPC[pp+'|'+c]||0):(r.incByPC[pp+'|'+c]||0)/12,r)); if(!vals.some(v=>v>0)) return;
+      const color=pRamp(pp)[ci%5]; incSeries.push({name:pp+' · '+c,color,values:vals}); items.push(`<span><i style="background:${color}"></i>${esc(c)}</span>`); });
+    if(items.length){ let dates='';
+      if(S.settings.people.includes(pp)){ const pi=personInfo(pp); const parts=[];
+        if(pi.stop) parts.push('stopt met werken '+dNl(pi.stop));
+        if(pi.aow) parts.push(`AOW ${dNl(pi.aow.date)} (${ageTxt(pi.aow.months)}${pi.aow.fixed?'':', nog niet vastgesteld'})`);
+        if(pi.pensionManual) parts.push('pensioen '+dNl(pi.pension));
+        dates = parts.length ? `<span class="pdates">${parts.join(' · ')}</span>` : `<span class="pdates muted">Vul bij Instellingen de geboortedatum in om de AOW-datum te zien</span>`; }
+      legendGroups.push(`<div class="lgrp"><div class="lhead"><b>${esc(pp)}</b>${dates}</div><div class="litems">${items.join('')}</div></div>`); } }
+  const incChart=stackChart({labels,series:incSeries,h:300,step:500}).replace(/<div class="legend">[\s\S]*<\/div>$/,'')+`<div class="legend lgroups">${legendGroups.join('')}</div>`;
+  const people=[...new Set(pr.rows.flatMap(r=>Object.keys(r.incByPerson)))];
+  const low=pr.rows.find(r=>r.end<0);
+  return `<div class="row"><div><h1>Langetermijnplanning: 30 jaar</h1><p class="sub">Een berekening op basis van jullie eigen invoer. Geen garantie en geen beleggingsadvies.</p></div><span class="spacer"></span><div class="toggle"><button data-a="real" data-v="0" class="${real?'':'on'}">Nominale euro's</button><button data-a="real" data-v="1" class="${real?'on':''}">Euro's van nu</button></div></div>${demoBanner()}
+  <div class="info"><b>Uitgangspunten:</b> start met het huidige bekende vermogen (${E(pr.start.total)}${pr.start.missing.length?', <b>onvolledig</b>':''}). ${pr.rest.months?`Voor de rest van ${curY()} (${pr.rest.months} maand${pr.rest.months===1?'':'en'}) tellen de verwachte inkomsten (${E(pr.rest.inc)}), uitgaven (${E(pr.rest.exp)}) en rendement (${E(pr.rest.ret)}) mee, dus op 1 januari ${curY()+1} is het verwachte vermogen ${E(pr.rest.end)}.`:`Op 1 januari ${curY()+1} is het verwachte vermogen ${E(pr.rest.end)}.`} Uitgaven: ${pr.base.source==='werkelijk'?`gemiddelde van de werkelijke uitgaven over ${pr.base.n} maand${pr.base.n===1?'':'en'} binnen de laatste 24 maanden`:'<b>nog geen werkelijke uitgaven</b>, dus de verwachte vaste lasten'}: ${E(pr.baseM)} per maand, zonder afschrijving. Grote uitgaven komen uit de investeringen en losse uitgaven die je met een datum in de toekomst hebt ingevoerd; die tellen volledig mee in het jaar van betaling. Inkomsten: de verwachte inkomsten uit Vaste posten en uit je eigen verwachtingen bij Invoeren, verhoogd met de inkomensgroei (bedragen gelden als euro's van nu). Rendement over het vermogen aan het begin van elk jaar, min ${numIn(S.settings.box3)}% vermogensbelasting.</div>
+  ${low?`<div class="warn">Volgens deze berekening wordt het vermogen in <b>${low.y}</b> negatief.</div>`:''}
+  <div class="card"><h2>Verwacht vermogen${real?' (euro\'s van nu)':''}</h2>${comboChart({labels:['Nu',...labels],line:{name:'Vermogen eind van het jaar',values:[pr.start.total,...pr.rows.map(r=>R(r.end,r))],color:'#1d5fbf'},bars:[{name:'Inkomsten per jaar',values:[0,...pr.rows.map(r=>R(r.inc,r))],color:'#93b8ea'},{name:'Uitgaven per jaar',values:[0,...pr.rows.map(r=>R(r.exp,r))],color:'#e89a6a'}]})}<p class="small muted" style="margin-top:6px">Het eerste punt is het vermogen van nu. Elk volgend punt is het vermogen aan het eind van dat jaar: vermogen aan het begin + rendement + inkomsten − uitgaven. Daalt het vermogen in een jaar niet terwijl je meer uitgeeft dan je verdient, dan maakt het rendement het verschil goed.</p></div>
+  <div class="card"><div class="row"><h2 style="margin:0">Verwachte netto-inkomsten per maand, per persoon${real?' (euro\'s van nu)':''}</h2><span class="spacer"></span>
+    <div class="toggle"><button data-a="incView" data-v="dec" class="${incDec?'on':''}">Maandbedrag in december</button><button data-a="incView" data-v="avg" class="${incDec?'':'on'}">Gemiddeld per maand</button></div></div>
+    <p class="small muted" style="margin-top:8px">${incDec?'Per jaar het maandbedrag zoals het in december van dat jaar is. Een pensioen dat in oktober begint, zie je in dat jaar dus meteen volledig.':'Per jaar het totaal van dat jaar gedeeld door 12. In een jaar waarin iets begint of stopt, telt alleen het deel van het jaar mee.'} Elke staaf is opgebouwd uit ${persons.map(esc).join(' en ').replace(/ en (?=[^ ]* en )/g,', ')}: onderaan ${esc(persons[0]||'')} in blauwtinten${persons[1]?`, daarboven ${esc(persons[1])} in oranjetinten`:''}. De tinten onderscheiden de categorieën. Beweeg over een blok voor het bedrag.</p>${incChart}</div>
+  <div class="card"><h2>Basis voor de uitgaven: gemiddeld per maand</h2>
+    <p class="small muted">${pr.base.source==='werkelijk'?`Gemiddelde van de werkelijke uitgaven in de ${pr.base.n} ingevulde maand${pr.base.n===1?'':'en'} van ${mName(iYm(ymI(curYm())-24))} t/m ${mName(iYm(ymI(curYm())-1))} (de laatste 24 volledige maanden). Maanden zonder invoer tellen niet mee, zodat ze het gemiddelde niet omlaag trekken. Investeringen en afschrijving tellen niet mee; grote uitgaven in de toekomst voer je in bij Investeringen, met een datum in de toekomst.`:'Er zijn nog geen werkelijke uitgaven ingevuld, dus de app gebruikt de verwachte vaste lasten.'}</p>
+    <div class="tablewrap"><table><tr><th>Categorie</th><th class="n">Gemiddeld per maand</th><th class="n">Per jaar</th><th class="n">${curY()+1} (met inflatie)</th></tr>
+    ${Object.entries(pr.base.cats).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`<tr><td>${esc(c)}</td><td class="n">${E(v)}</td><td class="n">${E(v*12)}</td><td class="n">${E(v*12*(pr.rows[0]?.infF||1))}</td></tr>`).join('')}
+    <tr class="tot"><td>Totaal</td><td class="n">${E(pr.baseM)}</td><td class="n">${E(pr.baseM*12)}</td><td class="n">${E(pr.baseM*12*(pr.rows[0]?.infF||1))}</td></tr></table></div></div>
+  <div class="grid g2">
+    <div class="card"><div class="row"><h2 style="margin:0">Toekomstige aankopen</h2><span class="spacer"></span><button class="btn sm" data-a="addAct" data-k="uit">+ Toevoegen</button></div>
+      ${(()=>{ const fut=S.actuals.filter(a=>a.kind==='uit'&&!a.grid&&a.monthTotal==null&&a.date>todayStr()).sort((a,b)=>a.date<b.date?-1:1);
+        return fut.length?`<table style="margin-top:10px"><tr><th>Datum</th><th>Omschrijving</th><th class="n">Bedrag</th><th></th></tr>${fut.map(a=>`<tr><td>${dNl(a.date)}</td><td>${esc(a.note||a.cat)}${a.rep&&a.repYears?` <span class="badge" title="Terugkerende investering">elke ${a.repYears} jaar</span>`:''}</td><td class="n">${E(a.amount)}</td><td class="n" style="white-space:nowrap"><button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Wijzig</button><button class="btn ghost sm" data-a="delAct" data-id="${a.id}" title="Verwijderen">✕</button></td></tr>`).join('')}</table>`:'<p class="muted">Nog geen toekomstige aankopen.</p>'; })()}
+      <p class="small muted" style="margin-top:8px">Toekomstige aankopen voer je hier in of bij <a href="#investeringen">Investeringen</a>, met de datum waarop je verwacht te betalen. Ze tellen in de prognose volledig mee in dat jaar. Wijzigen of verwijderen kan hier of daar.</p></div>
+    <div class="card"><h2>Inkomsten per persoon (eerste jaar, ${curY()+1})</h2>${pr.rows[0]?`<table>${people.map(p=>`<tr><td>${esc(p)}</td><td class="n">${E(R((pr.rows[0].incByPerson[p]||0)/12,pr.rows[0]))} p/m</td></tr>`).join('')||'<tr><td class="muted">Geen vaste inkomsten</td></tr>'}</table>`:''}<p class="small muted">Toekomstige inkomsten per persoon voer je in bij Invoeren → Inkomsten → Verwachting, of bij Vaste posten met een startmaand (bijv. pensioen of AOW).</p></div>
+  </div>
+  <div class="card"><h2>Aannames per jaar en uitkomst</h2><p class="small muted">Pas de percentages per jaar aan. Een leeg vakje gebruikt de standaardwaarde uit Instellingen (inflatie ${numIn(S.settings.infl)}%, rendement ${numIn(S.settings.rend)}%, inkomensgroei ${numIn(S.settings.growth)}%).</p>
+  <div class="tablewrap"><table><tr><th>Jaar</th><th class="n">Inflatie %</th><th class="n">Rendement %</th><th class="n">Inkomensgroei %</th><th class="n">Begin</th><th class="n">Inkomsten</th><th class="n">Uitgaven</th><th class="n">Rendement</th><th class="n">Eind</th></tr>
+  ${pr.rows.map(r=>{const o=S.years[r.y]||{}; const inp=(k)=>`<input class="cell" data-year="${r.y}" data-key="${k}" inputmode="decimal" value="${o[k]!=null?numIn(o[k]):''}" placeholder="${numIn(S.settings[k])}">`;
+    return `<tr><td>${r.y}</td><td class="n">${inp('infl')}</td><td class="n">${inp('rend')}</td><td class="n">${inp('growth')}</td><td class="n">${E(R(r.begin,r))}</td><td class="n">${E(R(r.inc,r))}</td><td class="n">${E(R(r.exp,r))}${r.plan?`<div class="small muted">waarvan gepland en investeringen ${E(R(r.plan,r))}</div>`:''}</td><td class="n">${E(R(r.ret,r))}</td><td class="n ${r.end<0?'neg':''}"><b>${E(R(r.end,r))}</b></td></tr>`;}).join('')}</table></div></div>`;
+}
+function catUsage(kind,cat,sub){
+  const n=S.actuals.filter(a=>a.kind===kind&&a.cat===cat&&(sub==null||(a.sub||'')===sub)).length
+    + (sub==null?S.recurring.filter(r=>r.kind===kind&&r.cat===cat).length+S.expected.filter(e=>e.kind===kind&&e.cat===cat).length:0);
+  return n;
+}
+function catEditor(){
+  const expRows=S.expCats.map((c,i)=>{ const subs=S.subCats[c]||[];
+    return `<div class="catbox">
+      <div class="row cathead" style="gap:8px">
+        <span class="catnr">${i+1}</span>
+        <input class="catname" data-kind="uit" data-cat="${esc(c)}" value="${esc(c)}" aria-label="Naam categorie">
+        <label class="small" style="display:flex;gap:6px;align-items:center;white-space:nowrap" title="Uitgaven in deze categorie blijven altijd een gewone uitgave, ook boven het grensbedrag"><input type="checkbox" class="noinv1" data-cat="${esc(c)}" ${noInv(c)?'checked':''}> nooit investering</label>
+        <span class="spacer"></span>
+        <button class="btn ghost sm" data-a="catMove" data-kind="uit" data-cat="${esc(c)}" data-d="-1" ${i===0?'disabled':''} title="Omhoog">▲</button>
+        <button class="btn ghost sm" data-a="catMove" data-kind="uit" data-cat="${esc(c)}" data-d="1" ${i===S.expCats.length-1?'disabled':''} title="Omlaag">▼</button>
+        <button class="btn ghost sm" data-a="catDel" data-kind="uit" data-cat="${esc(c)}" title="Categorie verwijderen" aria-label="Categorie verwijderen">✕</button>
+      </div>
+      <div class="subs">
+        ${subs.map(sb=>`<span class="subchip"><input class="subname" data-cat="${esc(c)}" data-sub="${esc(sb)}" value="${esc(sb)}" size="${Math.max(6,sb.length+1)}" aria-label="Naam subcategorie"><button data-a="subDel" data-cat="${esc(c)}" data-sub="${esc(sb)}" title="Subcategorie verwijderen">✕</button></span>`).join('')}
+        <span class="subadd"><input class="subnew" data-cat="${esc(c)}" placeholder="+ subcategorie" size="14"><button class="btn sec sm" data-a="subAdd" data-cat="${esc(c)}">Toevoegen</button></span>
+      </div></div>`; }).join('');
+  const incRows=S.incCats.map((c,i)=>`<div class="catbox"><div class="row cathead" style="gap:8px"><span class="catnr">${i+1}</span>
+      <input class="catname" data-kind="in" data-cat="${esc(c)}" value="${esc(c)}" aria-label="Naam categorie"><span class="spacer"></span>
+      <button class="btn ghost sm" data-a="catMove" data-kind="in" data-cat="${esc(c)}" data-d="-1" ${i===0?'disabled':''}>▲</button>
+      <button class="btn ghost sm" data-a="catMove" data-kind="in" data-cat="${esc(c)}" data-d="1" ${i===S.incCats.length-1?'disabled':''}>▼</button>
+      <button class="btn ghost sm" data-a="catDel" data-kind="in" data-cat="${esc(c)}" title="Categorie verwijderen" aria-label="Categorie verwijderen">✕</button></div></div>`).join('');
+  return `<div class="grid catgrid" style="grid-template-columns:minmax(0,3fr) minmax(0,2fr)">
+    <div class="card"><h2>Uitgavencategorieën</h2>${expRows}
+      <div class="row" style="margin-top:10px"><input id="newCat_uit" class="catname" placeholder="Nieuwe categorie, bijv. Huisdieren"><button class="btn sm" data-a="catAdd" data-kind="uit">+ Categorie toevoegen</button></div></div>
+    <div class="card"><h2>Inkomstencategorieën</h2><p class="small muted">Inkomsten verdeel je bij Invoeren automatisch over ${esc(S.settings.people.join(', '))} en Samen.</p>${incRows}
+      <div class="row" style="margin-top:10px"><input id="newCat_in" class="catname" placeholder="Nieuwe categorie"><button class="btn sm" data-a="catAdd" data-kind="in">+ Toevoegen</button></div></div>
+  </div>`;
+}
+function renameCat(kind,old,nw){
+  nw=nw.trim(); const list=kind==='uit'?S.expCats:S.incCats;
+  if(!nw) return 'Een categorie heeft een naam nodig';
+  if(nw===old) return null;
+  if(nw===AFS) return '"Afschrijving" is gereserveerd';
+  if(list.includes(nw)) return 'Die categorie bestaat al';
+  list[list.indexOf(old)]=nw;
+  for(const a of S.actuals) if(a.kind===kind&&a.cat===old) a.cat=nw;
+  for(const r of S.recurring) if(r.kind===kind&&r.cat===old) r.cat=nw;
+  for(const e of S.expected) if(e.kind===kind&&e.cat===old) e.cat=nw;
+  if(kind==='uit'){ if(S.subCats[old]){ S.subCats[nw]=S.subCats[old]; delete S.subCats[old]; }
+    S.settings.noInvCats=S.settings.noInvCats.map(c=>c===old?nw:c); }
+  else for(const p of S.incPlan) if(p.cat===old) p.cat=nw;
+  return null;
+}
+function renameSub(cat,old,nw){
+  nw=nw.trim(); const subs=S.subCats[cat]||[];
+  if(!nw) return 'Een subcategorie heeft een naam nodig';
+  if(nw===old) return null; if(subs.includes(nw)) return 'Die subcategorie bestaat al';
+  subs[subs.indexOf(old)]=nw;
+  for(const a of S.actuals) if(a.kind==='uit'&&a.cat===cat&&a.sub===old){ a.sub=nw; if(a.note===old) a.note=nw; }
+  return null;
+}
+function vInstellingen(){
+  const s=S.settings;
+  return `<h1>Instellingen</h1><p class="sub">Categorieën, standaardaannames en je gegevens.</p>${demoBanner()}
+  <div class="grid g2">
+    <div class="card"><h2>Algemeen</h2>
+      <div class="f"><label>Grensbedrag investeringen (€)</label><input id="s_threshold" inputmode="decimal" value="${numIn(s.threshold)}"><div class="help">Uitgaven hóger dan dit bedrag worden een investering.</div></div>
+      <div class="f"><label>Namen (gescheiden door komma)</label><input id="s_people" value="${esc(s.people.join(', '))}"></div>
+      <div class="f"><label>Standaard inflatie per jaar (%)</label><input id="s_infl" inputmode="decimal" value="${numIn(s.infl)}"></div>
+      <div class="f"><label>Standaard vermogensrendement per jaar (%)</label><input id="s_rend" inputmode="decimal" value="${numIn(s.rend)}"></div>
+      <div class="f"><label>Standaard inkomensgroei per jaar (%)</label><input id="s_growth" inputmode="decimal" value="${numIn(s.growth)}"></div>
+      <div class="f"><label>Vermogensbelasting (box 3), % van het vermogen per jaar</label><input id="s_box3" inputmode="decimal" value="${numIn(s.box3)}"><div class="help">Standaard 0. Wordt in de prognose van het rendement afgetrokken.</div></div>
+      <button class="btn" data-a="saveSet">Opslaan</button></div>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h2>Personen en pensioen</h2>
+      ${S.settings.people.map(p=>{ const o=(S.settings.persons||{})[p]||{}; const pi=personInfo(p); return `<div class="catbox"><b>${esc(p)}</b>
+        <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:8px">
+          <div class="f" style="margin:0"><label>Geboortedatum</label><input class="pfield dnl" inputmode="numeric" placeholder="dd-mm-jjjj" data-p="${esc(p)}" data-k="birth" value="${esc(isoToNl(o.birth))}"></div>
+          <div class="f" style="margin:0"><label>Stopt met werken op</label><input class="pfield dnl" inputmode="numeric" placeholder="dd-mm-jjjj" data-p="${esc(p)}" data-k="stop" value="${esc(isoToNl(o.stop))}"></div>
+          <div class="f" style="margin:0"><label>Pensioen gaat in op</label><input class="pfield dnl" inputmode="numeric" placeholder="dd-mm-jjjj" data-p="${esc(p)}" data-k="pension" value="${esc(isoToNl(o.pension))}"></div>
+        </div>
+        <div class="small" style="margin-top:6px">${pi.aow?`AOW-datum: <b>${dNl(pi.aow.date)}</b> (AOW-leeftijd ${ageTxt(pi.aow.months)}${pi.aow.fixed?', wettelijk vastgesteld':', <span style="color:var(--warn)">nog niet vastgesteld, aanname</span>'})`:'<span class="muted">Vul de geboortedatum in om de AOW-datum te berekenen.</span>'}${o.pension?'':' · laat "Pensioen gaat in op" leeg als je pensioen op de AOW-datum ingaat'}</div></div>`; }).join('')}
+      <div class="f"><label>AOW-leeftijd voor jaren na ${AOW_FIXED_TO} (nog niet vastgesteld)</label><select id="aowLater">${[3,6,9,12,15,18].map(m=>`<option value="${m}" ${+S.settings.aowLater===m?'selected':''}>${ageTxt(804+m-0)}</option>`).join('')}</select>
+        <div class="help">Tot en met ${AOW_FIXED_TO} is de AOW-leeftijd wettelijk vastgesteld op 67 jaar en 3 maanden. Daarna hangt hij af van de levensverwachting en kan hij alleen gelijk blijven of stijgen.</div></div>
+      <div class="f"><label>Inkomen uit werk (stopt op de stopdatum)</label><div class="row" style="gap:6px 16px">${S.incCats.map(c=>`<label style="display:flex;gap:6px;align-items:center;font-weight:500"><input type="checkbox" class="workcat" value="${esc(c)}" ${(S.settings.workCats||[]).includes(c)?'checked':''}> ${esc(c)}</label>`).join('')}</div>
+        <div class="help">Vanaf de stopdatum telt de prognose deze inkomsten voor die persoon niet meer mee, ook als ze bij Vaste posten doorlopen. Stopt iemand halverwege een maand, dan telt die maand nog volledig mee.</div></div></div>
+    <div class="card"><h2>Hoe werken categorieën?</h2>
+      <p class="small">Uitgaven delen je in <b>categorieën</b> in, met eventueel <b>subcategorieën</b> eronder. Bij Invoeren vul je per categorie het totaal in, of de subcategorieën afzonderlijk.</p>
+      <p class="small">Een <b>naam wijzigen</b> doe je door in het vakje te typen. Bedragen die je al had ingevoerd verhuizen automatisch mee naar de nieuwe naam.</p>
+      <p class="small">Een categorie <b>verwijderen</b> wist geen bedragen. Die blijven zichtbaar als "oude categorie".</p>
+      <p class="small muted">"Afschrijving" maakt de app zelf aan. Wijzigingen worden meteen opgeslagen.</p></div>
+  </div>
+  ${catEditor()}
+  <div class="card"><h2>Gegevens</h2>
+    <p class="small muted">Je gegevens staan versleuteld in je privé GitHub-repository <b>${esc(CFG?CFG.owner+"/"+CFG.repo:"")}</b> en zijn zichtbaar op al je apparaten die je hebt gekoppeld. Status: <span id="syncDot" class="sync ${dbState}">${syncTxt()}</span></p>
+    <div class="row"><button class="btn sec" data-a="export">Back-up downloaden</button><button class="btn sec" data-a="copy">Back-up kopiëren</button><button class="btn sec" data-a="paste">Back-up plakken</button><button class="btn sec" data-a="unlink">Koppeling op dit apparaat verwijderen</button><label class="btn sec" style="cursor:pointer">Back-up terugzetten<input type="file" id="importFile" accept=".json,application/json" hidden></label><span class="spacer"></span>${S.demo?'<button class="btn danger" data-a="wipe">Voorbeeldgegevens wissen en leeg beginnen</button>':'<button class="btn sec" data-a="demo">Voorbeeldgegevens laden</button><button class="btn danger" data-a="wipe">Alles wissen</button>'}</div>
+  </div>`;
+}
+
+function render(){
+  view=(location.hash.slice(1)||'overzicht'); if(!VIEWS.some(v=>v[0]===view)) view='overzicht';
+  renderNav();
+  const fn={analyse:vAnalyse,invoer:vInvoer,overzicht:vOverzicht,rekeningen:vRekeningen,maand:vMaand,vast:vVast,investeringen:vInvesteringen,rendement:vRendement,prognose:vPrognose,instellingen:vInstellingen}[view];
+  $('#main').innerHTML=fn();
+}
+
+/* ============ Acties ============ */
+function keepScroll(focusSel){ const sc=window.scrollY; render(); window.scrollTo(0,sc); if(focusSel){ const el=document.querySelector(focusSel); el&&el.focus(); } }
+function addSub(c,val){ const nm=(val||'').trim(); if(!nm) return; const subs=(S.subCats[c] ||= []);
+  if(subs.includes(nm)){ toast('Die subcategorie bestaat al'); return; } subs.push(nm); save(); keepScroll(`.subnew[data-cat="${CSS.escape(c)}"]`); }
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-a]'); if(!b) return; const a=b.dataset.a, id=b.dataset.id, k=b.dataset.k;
+  const acc=id&&accById(id);
+  const del=(list,msg)=>confirmBox(msg,()=>{ S[list]=S[list].filter(x=>x.id!==id); });
+  switch(a){
+    case 'addAcc': accountForm(); break;
+    case 'editAcc': accountForm(acc); break;
+    case 'delAcc': confirmBox(`De rekening <b>${esc(acc.name)}</b> en alle metingen ervan worden verwijderd.`,()=>{ S.accounts=S.accounts.filter(x=>x.id!==id); S.meas=S.meas.filter(m=>m.acc!==id); S.flows=S.flows.filter(f=>f.acc!==id); S.interest=S.interest.filter(x=>x.acc!==id); }); break;
+    case 'goldUpd': { const inp=document.querySelector(`.goldPrice[data-id="${id}"]`)||document.querySelector('.goldPrice'); const price=parseNum(inp?inp.value:'');
+      if(!(price>0)){ toast('Vul een geldige goudprijs per gram in'); inp&&inp.focus(); break; }
+      const d=todayStr(); S.settings.goldPrice={price,date:d}; let n=0, miss=0;
+      for(const g of goldAccs()){ const gr=+g.gram||0; if(!gr){ miss++; continue; }
+        S.meas=S.meas.filter(m=>!(m.acc===g.id && m.date===d && m.gold));
+        S.meas.push({id:uid(),acc:g.id,date:d,value:Math.round(gr*price*goldPctOf(g))/100,at:Date.now(),gold:true}); n++; }
+      save(); keepScroll();
+      toast(n?`Goudwaarde bijgewerkt voor ${n} rekening${n===1?'':'en'}${miss?`; ${miss} zonder gewicht overgeslagen`:''}`:'Vul eerst bij de goudrekening het gewicht in (Wijzig)'); break; }
+    case 'meas': measForm(acc); break;
+    case 'flow': flowForm(acc); break;
+    case 'rate': rateForm(acc); break;
+    case 'intr': interestForm(acc); break;
+    case 'delRate': { const ac=accById(b.dataset.acc); confirmBox('Deze rentewijziging wordt verwijderd.',()=>{ ac.rates=(ac.rates||[]).filter(r=>r.id!==id); }); break; }
+    case 'delInt': del('interest','Deze ontvangen rente wordt verwijderd.'); break;
+    case 'hist': openHist[id]=!openHist[id]; render(); break;
+    case 'editMeas': { const m=S.meas.find(x=>x.id===id); measForm(accById(m.acc),m); break; }
+    case 'delMeas': del('meas','Deze meting wordt verwijderd.'); break;
+    case 'delFlow': del('flows','Deze aan- of verkoop wordt verwijderd.'); break;
+    case 'gYm': gridYm=b.dataset.ym; invMode=null; render(); break;
+    case 'gPrev': gridYm=iYm(ymI(invYm())-1); invMode=null; render(); break;
+    case 'gNext': gridYm=iYm(ymI(invYm())+1); invMode=null; render(); break;
+    case 'gToggle': gridOpen[b.dataset.cat]=b.dataset.open!=='1'; render(); break;
+    case 'invKind': invKind=b.dataset.v; invMode=null; render(); break;
+    case 'invMode': invMode=b.dataset.v; render(); break;
+    case 'gCopy': { const ym=invYm(), prev=iYm(ymI(ym)-1), kind=invKind; let n=0;
+      const prevRecs=S.actuals.filter(a=>a.grid&&a.monthTotal==null&&a.kind===kind&&a.date.slice(0,7)===prev);
+      if(kind==='uit'){ const pt=monthTotalRec(prev); if(pt&&!monthTotalRec(ym)){ setMonthTotal(ym,pt.monthTotal); n++; } }
+      for(const cat of new Set(prevRecs.map(a=>a.cat))){ if(S.actuals.some(a=>a.grid&&a.kind===kind&&a.cat===cat&&a.date.slice(0,7)===ym)) continue;
+        for(const r of prevRecs.filter(a=>a.cat===cat)){ setGrid(ym,cat,r.sub,r.amount,kind); n++; } }
+      save(); render(); toast(n?`${n} bedrag${n===1?'':'en'} overgenomen; ingevulde categorieën bleven ongewijzigd`:'Niets overgenomen: vorige maand is leeg of alles is al ingevuld'); break; }
+    case 'mYm': selYm=b.dataset.ym; render(); break;
+    case 'incView': S.settings.incView=b.dataset.v; save(); keepScroll(); break;
+    case 'looseList': looseModal(b.dataset.kind,b.dataset.ym,b.dataset.cat); break;
+    case 'looseDel': { S.actuals=S.actuals.filter(a=>a.id!==id); save(); toast('Losse invoer verwijderd'); looseModal(b.dataset.kind,b.dataset.ym,b.dataset.cat); if(!$('#modalRoot').innerHTML) keepScroll(); break; }
+    case 'invView': invView=b.dataset.v; render(); break;
+    case 'gYear': gridYm=iYm(ymI(invYm())+12*(+b.dataset.d)); invMode=null; render(); break;
+    case 'gOpenMonth': e.preventDefault(); gridYm=b.dataset.ym; invView='maand'; invMode=null; render(); window.scrollTo(0,0); break;
+    case 'anKind': anKind=b.dataset.v; anFocus=null; render(); break;
+    case 'anFocus': anFocus=(b.dataset.cat&&anFocus!==b.dataset.cat)?b.dataset.cat:null; keepScroll(); break;
+    case 'mPrev': selYm=iYm(ymI(selYm||curYm())-1); render(); break;
+    case 'mNext': selYm=iYm(ymI(selYm||curYm())+1); render(); break;
+    case 'addAct': actualForm(k,null,view==='maand'?selYm:view==='invoer'?invYm():null); break;
+    case 'editAct': { const x=S.actuals.find(z=>z.id===id); actualForm(x.kind,x); break; }
+    case 'delAct': del('actuals','Dit bedrag wordt verwijderd.'); break;
+    case 'addExp': expectedForm(null,selYm); break;
+    case 'editExp': expectedForm(S.expected.find(z=>z.id===id)); break;
+    case 'delExp': del('expected','Deze verwachting wordt verwijderd.'); break;
+    case 'addRec': recurringForm(k); break;
+    case 'editRec': { const r=S.recurring.find(z=>z.id===id); recurringForm(r.kind,r); break; }
+    case 'delRec': del('recurring','Deze vaste post wordt verwijderd, ook voor de maanden in het verleden. Wil je hem alleen laten stoppen? Vul dan bij Bewerken een laatste termijn in.'); break;
+    case 'addPlan': plannedForm(); break;
+    case 'editPlan': plannedForm(S.planned.find(z=>z.id===id)); break;
+    case 'delPlan': del('planned','Deze geplande uitgave wordt verwijderd.'); break;
+    case 'addHR': histRendForm(); break;
+    case 'delHR': del('histRend','Dit handmatige rendement wordt verwijderd.'); break;
+    case 'real': S.settings.real=b.dataset.v==='1'; save(); render(); break;
+    case 'saveSet': {
+      const g=i=>parseNum($('#s_'+i).value); const vals={threshold:g('threshold'),infl:g('infl'),rend:g('rend'),growth:g('growth'),box3:g('box3')};
+      if(Object.values(vals).some(v=>isNaN(v))) { toast('Controleer de getallen'); return; }
+      Object.assign(S.settings,vals); S.settings.people=$('#s_people').value.split(',').map(x=>x.trim()).filter(Boolean); save(); render(); toast('Instellingen opgeslagen'); break; }
+    case 'catAdd': { const k=b.dataset.kind, el=$('#newCat_'+k), nm=el.value.trim(), list=k==='uit'?S.expCats:S.incCats;
+      if(!nm) { el.focus(); return; } if(nm===AFS||list.includes(nm)){ toast('Die categorie bestaat al'); return; }
+      list.push(nm); save(); keepScroll(); toast('Categorie toegevoegd'); break; }
+    case 'catMove': { const k=b.dataset.kind, list=k==='uit'?S.expCats:S.incCats, i=list.indexOf(b.dataset.cat), j=i+(+b.dataset.d);
+      if(j<0||j>=list.length) return; [list[i],list[j]]=[list[j],list[i]]; save(); keepScroll(); break; }
+    case 'catDel': { const k=b.dataset.kind, c=b.dataset.cat, n=catUsage(k,c);
+      confirmBox(`De categorie <b>${esc(c)}</b> wordt uit de lijst gehaald.${n?` Er ${n===1?'is':'zijn'} ${n} bedrag${n===1?'':'en'} of vaste post${n===1?'':'en'} met deze categorie; die blijven bewaard en zichtbaar als "oude categorie".`:''}`,
+        ()=>{ if(k==='uit'){ S.expCats=S.expCats.filter(x=>x!==c); delete S.subCats[c]; S.settings.noInvCats=S.settings.noInvCats.filter(x=>x!==c); } else S.incCats=S.incCats.filter(x=>x!==c); }); break; }
+    case 'subAdd': { const c=b.dataset.cat, el=document.querySelector(`.subnew[data-cat="${CSS.escape(c)}"]`); addSub(c,el.value); break; }
+    case 'subDel': { const c=b.dataset.cat, sb=b.dataset.sub, n=catUsage('uit',c,sb);
+      confirmBox(`De subcategorie <b>${esc(sb)}</b> wordt verwijderd uit ${esc(c)}.${n?` Er ${n===1?'is':'zijn'} ${n} bedrag${n===1?'':'en'} mee ingevoerd; die blijven bewaard.`:''}`,()=>{ S.subCats[c]=(S.subCats[c]||[]).filter(x=>x!==sb); if(!S.subCats[c].length) delete S.subCats[c]; }); break; }
+    case 'saveCats': {
+      const L=i=>[...new Set($('#s_'+i).value.split('\n').map(x=>x.trim()).filter(x=>x&&x!==AFS))];
+      const inc=L('inc'), exp=[], subs={};
+      for(const line of L('exp')){ const [c,rest]=line.split(/:(.*)/s); const cat=c.trim(); if(!cat||cat===AFS||exp.includes(cat)) continue; exp.push(cat);
+        const sl=(rest||'').split(',').map(x=>x.trim()).filter(Boolean); if(sl.length) subs[cat]=[...new Set(sl)]; }
+      if(!inc.length||!exp.length){ toast('Houd minstens één categorie over'); return; }
+      S.incCats=inc; S.expCats=exp; S.subCats=subs; S.settings.noInvCats=[...document.querySelectorAll('.noinv:checked')].map(x=>x.value).filter(c=>exp.includes(c)); save(); render(); toast('Categorieën opgeslagen'); break; }
+    case 'export': {
+      try{ const blob=new Blob([JSON.stringify(S,null,1)],{type:'application/json'}); const u=URL.createObjectURL(blob); const l=document.createElement('a'); l.href=u; l.download='huishoudfinancien-backup-'+todayStr()+'.json'; document.body.appendChild(l); l.click(); l.remove(); setTimeout(()=>URL.revokeObjectURL(u),2000); toast('Back-up gedownload'); }catch(err){ toast('Downloaden lukt niet; gebruik Back-up kopiëren'); } break; }
+    case 'paste': pasteModal(); break;
+    case 'unlink': unlinkDevice(); break;
+    case 'copy': { const txt=JSON.stringify(S); const show=()=>{ $('#modalRoot').innerHTML=`<div class="ov"><div class="modal"><h3>Back-up kopiëren</h3><p class="small">Kopiëren naar het klembord lukte niet automatisch. Selecteer de tekst hieronder en kopieer hem zelf.</p><div class="f"><textarea id="cpTxt" rows="8" readonly></textarea></div><div class="actions"><button class="btn" id="cpOk">Sluiten</button></div></div></div>`; $('#cpTxt').value=txt; $('#cpOk').onclick=closeModal; setTimeout(()=>{ $('#cpTxt').focus(); $('#cpTxt').select(); },30); };
+      try{ navigator.clipboard.writeText(txt).then(()=>toast('Back-up gekopieerd naar het klembord'),show); }catch(e){ show(); } break; }
+    case 'demo': confirmBox('Je huidige gegevens worden vervangen door voorbeeldgegevens. Maak eerst een back-up als je ze wilt bewaren.',()=>{ S=demoState(); normalize(); delete S._migrated; },'Vervangen'); break;
+    case 'wipe': confirmBox('Alle gegevens worden gewist, op al je apparaten. Categorieën en instellingen blijven behouden.',()=>{ const keep={settings:S.settings,incCats:S.incCats,expCats:S.expCats,subCats:S.subCats}; S=Object.assign(emptyState(),keep); S.settings.real=false; },'Wissen'); break;
+  }
+});
+document.addEventListener('input',e=>{ const t=e.target; if(t.classList&&(t.classList.contains('dnl')||t.classList.contains('mnl'))) autoMask(t); });
+document.addEventListener('change',e=>{
+  const t=e.target;
+  if(t.classList.contains('catname') && t.dataset.cat){ const err=renameCat(t.dataset.kind,t.dataset.cat,t.value); if(err){ toast(err); t.value=t.dataset.cat; return; } save(); keepScroll(); toast('Naam gewijzigd'); return; }
+  if(t.classList.contains('subname')){ const err=renameSub(t.dataset.cat,t.dataset.sub,t.value); if(err){ toast(err); t.value=t.dataset.sub; return; } save(); keepScroll(); toast('Naam gewijzigd'); return; }
+  if(t.classList.contains('pfield')){ const v=nlToIso(t.value); if(v===null){ toast('Vul de datum in als dd-mm-jjjj, bijvoorbeeld 10-09-1963'); t.focus(); return; }
+    const P=(S.settings.persons ||= {}); const o=(P[t.dataset.p] ||= {}); if(v) o[t.dataset.k]=v; else delete o[t.dataset.k]; save(); keepScroll(); toast(v?'Opgeslagen: '+dNl(v):'Datum gewist'); return; }
+  if(t.id==='aowLater'){ S.settings.aowLater=+t.value; save(); keepScroll(); toast('Opgeslagen'); return; }
+  if(t.classList.contains('workcat')){ S.settings.workCats=[...document.querySelectorAll('.workcat:checked')].map(x=>x.value); save(); toast('Opgeslagen'); return; }
+  if(t.classList.contains('noinv1')){ const c=t.dataset.cat; S.settings.noInvCats=S.settings.noInvCats.filter(x=>x!==c); if(t.checked) S.settings.noInvCats.push(c); save(); toast(t.checked?c+': nooit een investering':c+': uitgaven boven het grensbedrag worden weer investeringen'); return; }
+  if(e.target.classList.contains('gcell')){
+    const ym=e.target.dataset.ym||invYm(), cat=e.target.dataset.cat, sub=e.target.dataset.sub, kind=e.target.dataset.kind||'uit', mode=e.target.dataset.mode||'act', v=parseNum(e.target.value);
+    if(e.target.value.trim()!=='' && isNaN(v)){ toast('Geen geldig bedrag'); return; }
+    if(v<0){ toast('Vul een positief bedrag in'); return; }
+    if(cat==='__TOTAL__'){ setMonthTotal(ym,v); toast(isNaN(v)?'Maandtotaal gewist':'Maandtotaal opgeslagen'); }
+    else if(mode==='exp'){ setPlan(cat,sub,ym,v,invFwd); toast(isNaN(v)?'Verwachting gewist':invFwd?'Verwachting opgeslagen vanaf '+mLong(ym):'Verwachting opgeslagen voor '+mLong(ym)); }
+    else {
+      if(sub && !isNaN(v) && gridRec(ym,cat,'',kind)){ setGrid(ym,cat,'',NaN,kind); toast('Het totaal van '+cat+' wordt nu uit de onderverdeling berekend'); }
+      setGrid(ym,cat,sub,v,kind);
+    }
+    save();
+    requestAnimationFrame(()=>{ const ae=document.activeElement, key=ae&&ae.classList.contains('gcell')?[ae.dataset.cat,ae.dataset.sub,ae.dataset.ym]:null, sc=window.scrollY, yw=document.querySelector('.ywrap'), sx=yw?yw.scrollLeft:0;
+      render(); window.scrollTo(0,sc); const yw2=document.querySelector('.ywrap'); if(yw2) yw2.scrollLeft=sx;
+      if(key){ const el=[...document.querySelectorAll('.gcell')].find(x=>x.dataset.cat===key[0]&&x.dataset.sub===key[1]&&x.dataset.ym===key[2]); if(el&&!el.disabled&&!el.dataset.calc){ el.focus({preventScroll:true}); el.select(); } } });
+    return;
+  }
+  if(e.target.id==='ymPick' && e.target.value){ selYm=e.target.value; render(); }
+  if(e.target.id==='invPick' && e.target.value){ gridYm=e.target.value; invMode=null; render(); }
+  if(e.target.id==='invFwd'){ invFwd=e.target.checked; }
+  if(e.target.classList.contains('mpYear')){ const k=e.target.value+'-'+e.target.dataset.m; if(e.target.dataset.act==='gYm'){ gridYm=k; invMode=null; } else selYm=k; render(); }
+  if(e.target.id==='anPer'){ anPer=e.target.value; render(); }
+  if(e.target.id==='anFrom'||e.target.id==='anTo'){ const v=nlToYm(e.target.value); if(!v){ toast('Vul een maand in als mm-jjjj'); return; } if(e.target.id==='anFrom') anFrom=v; else anTo=v; render(); }
+  if(e.target.id==='anYm'){ const v=nlToYm(e.target.value); if(!v){ toast('Vul een maand in als mm-jjjj'); return; } anYm=v; render(); }
+  if(e.target.id==='anSubs'){ anSubs=e.target.checked; keepScroll(); }
+  if(e.target.classList.contains('cell')){
+    const y=e.target.dataset.year, k=e.target.dataset.key, v=parseNum(e.target.value);
+    const o=S.years[y]||(S.years[y]={}); if(isNaN(v)) delete o[k]; else o[k]=v; if(!Object.keys(o).length) delete S.years[y];
+    save(); const sc=window.scrollY; render(); window.scrollTo(0,sc);
+  }
+  if(e.target.id==='importFile' && e.target.files[0]){
+    const r=new FileReader(); r.onload=()=>{ try{ restoreFrom(JSON.parse(r.result)); save(); render(); toast('Back-up teruggezet'); }catch(err){ toast('Dit is geen geldig back-upbestand'); } }; r.readAsText(e.target.files[0]);
+  }
+});
+let _justFocused=null;
+document.addEventListener('focusin',e=>{ const t=e.target; if(!(t.classList&&t.classList.contains('gcell'))) return;
+  if(t.dataset.calc && t.dataset.cat===UNDIST){ toast('"Niet verdeeld" is het maandtotaal min wat je over de categorieën hebt verdeeld.'); t.blur(); return; }
+  if(t.dataset.calc){ const kind=t.dataset.kind||'uit', cat=t.dataset.cat, ym=t.dataset.ym, who=kind==='in'?S.settings.people.join(', ')+' of Samen':'de subcategorieën';
+    toast(`Het totaal van ${cat} wordt berekend. Wijzig het bedrag bij ${who}.`);
+    if(!gridOpen[kind+cat]){ gridOpen[kind+cat]=true; const sc=window.scrollY; render(); window.scrollTo(0,sc); }
+    const first=[...document.querySelectorAll('.gcell')].find(x=>x.dataset.cat===cat&&x.dataset.ym===ym&&x.dataset.sub&&!x.dataset.calc&&x.value!=='');
+    if(first){ first.focus({preventScroll:true}); } else t.blur(); return; }
+  _justFocused=t; try{ t.select(); }catch(_){} });
+document.addEventListener('mouseup',e=>{ if(_justFocused && e.target===_justFocused){ e.preventDefault(); try{ e.target.select(); }catch(_){} } _justFocused=null; });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal();
+  if((e.key==='PageUp'||e.key==='PageDown') && !$('#modalRoot').innerHTML && (view==='invoer'||view==='maand')){
+    e.preventDefault(); const d=e.key==='PageUp'?-1:1; const ae=document.activeElement, key=ae&&ae.classList.contains('gcell')?[ae.dataset.cat,ae.dataset.sub]:null;
+    if(ae&&ae.classList.contains('gcell')) ae.dispatchEvent(new Event('change',{bubbles:true}));
+    if(view==='invoer'){ gridYm=iYm(ymI(invYm())+(invView==='jaar'?12*d:d)); invMode=null; } else selYm=iYm(ymI(selYm||curYm())+d);
+    setTimeout(()=>{ render(); if(key&&invView!=='jaar'){ const el=[...document.querySelectorAll('.gcell')].find(x=>x.dataset.cat===key[0]&&x.dataset.sub===key[1]); if(el&&!el.disabled&&!el.dataset.calc){ el.focus(); el.select(); } } },0); return; }
+  if(['ArrowUp','ArrowDown','Enter'].includes(e.key) && e.target.classList?.contains('gcell')){
+    const t=e.target, cells=[...document.querySelectorAll(`.gcell[data-ym="${t.dataset.ym}"]`)].filter(x=>!x.disabled&&!x.dataset.calc), i=cells.indexOf(t), nx=cells[i+(e.key==='ArrowUp'?-1:1)];
+    e.preventDefault(); if(nx) nx.focus(); else t.blur(); return; }
+  if(e.key==='Enter'){ const t=e.target;
+    if(t.classList?.contains('subnew')){ e.preventDefault(); addSub(t.dataset.cat,t.value); }
+    else if(t.id==='newCat_uit'||t.id==='newCat_in'){ e.preventDefault(); document.querySelector(`[data-a=catAdd][data-kind="${t.id.slice(7)}"]`).click(); }
+    else if(t.classList?.contains('catname')||t.classList?.contains('subname')||t.classList?.contains('pfield')||t.id==='anFrom'||t.id==='anTo'||t.id==='anYm'){ e.preventDefault(); t.blur(); } } });
+window.addEventListener('hashchange',()=>{ closeModal(); render(); window.scrollTo(0,0); });
+
+(()=>{ const tip=$('#tip');
+  document.addEventListener('mousemove',e=>{ const t=e.target.closest&&e.target.closest('[data-tip]');
+    if(!t){ tip.style.display='none'; return; } tip.textContent=t.getAttribute('data-tip'); tip.style.display='block';
+    const w=tip.offsetWidth, h=tip.offsetHeight; let x=e.clientX+14, y=e.clientY+14; if(x+w>innerWidth-8) x=e.clientX-w-14; if(y+h>innerHeight-8) y=e.clientY-h-14; tip.style.left=x+'px'; tip.style.top=y+'px'; });
+  document.addEventListener('scroll',()=>{ tip.style.display='none'; },true); })();
+load(); render(); initDb();
+</script>
+</body>
+</html>
