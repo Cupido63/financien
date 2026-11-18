@@ -1000,10 +1000,20 @@ function termEnd(a){ const m=/(\d+(?:[.,]\d+)?)\s*(jaar|jr|j\b|maanden|maand|mnd
   const n=parseFloat(m[1].replace(',','.')), months=/^(jaar|jr|j)$/i.test(m[2])?Math.round(n*12):Math.round(n);
   const d=new Date(a.start+'T12:00'); d.setMonth(d.getMonth()+months); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
 function endDateOf(a){ return a.endDate || termEnd(a); }
+/* Vanaf welke datum loopt de rente over het huidige saldo? De laatste rente-uitkering (of de openingsdatum) vóór de peildatum.
+   Bij een deposito blijft het saldo tussen twee uitkeringen gelijk, dus de rente loopt al vanaf die datum. */
+function monthsAdd(x,mo){ const dt=new Date(x+'T12:00'), day=dt.getDate(); dt.setDate(1); dt.setMonth(dt.getMonth()+mo); const last=new Date(dt.getFullYear(),dt.getMonth()+1,0).getDate(); dt.setDate(Math.min(day,last)); return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate()); }
+function interestAnchor(a,date){
+  const step={maand:1,kwartaal:3,jaar:12}[a.renteFreq]; let best=null;
+  const ref=isDate(a.renteDag)?a.renteDag:(a.start||null);
+  if(step && ref){ let d=ref, n=0; while(d>date && n++<600) d=monthsAdd(d,-step); n=0; while(monthsAdd(d,step)<=date && n++<600) d=monthsAdd(d,step); if(d<=date) best=d; }
+  if(a.start && a.start<=date && (!best || a.start>best)) best=a.start;
+  return best||date;
+}
 function maturityOf(a){
   if(!endDateOf(a) || a.besch) return null;
   const cur=currentOf(a.id); let amt=(a.endAmount!=null&&a.endAmount!==''&&!isNaN(a.endAmount))?+a.endAmount:null, est=false;
-  if(amt==null && cur){ const yrs=Math.max(0,daysBetween(cur.date,endDateOf(a)))/365; amt=cur.value*Math.pow(1+rateAt(a,cur.date)/100,yrs); est=true; }
+  if(amt==null && cur){ const anchor=interestAnchor(a,cur.date); const yrs=Math.max(0,daysBetween(anchor,endDateOf(a)))/365; amt=cur.value*Math.pow(1+rateAt(a,cur.date)/100,yrs); est=true; }
   return {acc:a, date:endDateOf(a), amount:amt, est, cur, derived:!a.endDate};
 }
 function vrijPlan(H){
