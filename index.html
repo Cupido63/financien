@@ -1084,15 +1084,15 @@ function vInkomen(){
       :`<p class="muted small" style="margin-top:8px">${pp==='Samen'?'Inkomsten die niet bij één persoon horen, bijvoorbeeld huur van een tweede woning.':'Nog niets ingevuld. Voeg bijvoorbeeld salaris, pensioen en AOW toe, elk met een begin- en einddatum.'}</p>`}</div>`; };
   // grafiek: totaal netto per jaar, per persoon en per soort inkomen (euro's van nu)
   const cy=curY(), years=Array.from({length:31},(_,i)=>cy+i);
-  const RAMPS=[['#0b2545','#1d5fbf','#5b8fd9','#93b8ea','#c4d8f3'],['#8a3510','#eb6834','#f2956b','#f7bea2','#fbdccb'],['#3f4a5a','#6b7685','#9aa3af','#c3c9d1','#e1e5ea']];
+  const RAMPS=[['#0b2545','#1d5fbf','#5b8fd9','#0f8b8d','#93b8ea','#3f7d20'],['#8a3510','#eb6834','#f2a541','#a8326e','#f7bea2','#c2571a'],['#3f4a5a','#6b7685','#9aa3af','#7a5c99','#c3c9d1','#2f4b7c']];
   const ramp=pp=>{ const i=S.settings.people.indexOf(pp); return RAMPS[i>=0&&i<2?i:2]; };
   const tot={};
   years.forEach((y,yi)=>{ for(let m=1;m<=12;m++){ const ym=y+'-'+pad(m); if(ym<curYm()) continue;
       for(const [c,subs] of Object.entries(expIncome(ym))) for(const [sb,v] of Object.entries(subs)){ const pp=people.includes(sb)?sb:'Samen'; const k=pp+'|'+c; (tot[k] ||= years.map(()=>0))[yi]+=v; } } });
   const catOrder=[...S.incCats,...new Set(Object.keys(tot).map(k=>k.split('|')[1]).filter(c=>!S.incCats.includes(c)))];
   const series=[], legend=[];
-  for(const pp of people){ const items=[];
-    catOrder.forEach((c,ci)=>{ const vals=tot[pp+'|'+c]; if(!vals||!vals.some(v=>v>0)) return; const col=ramp(pp)[ci%5];
+  for(const pp of people){ const items=[]; let ci=0;
+    catOrder.forEach(c=>{ const vals=tot[pp+'|'+c]; if(!vals||!vals.some(v=>v>0)) return; const col=ramp(pp)[(ci++)%6];
       series.push({name:pp+' · '+c,color:col,values:vals}); items.push(`<span><i style="background:${col}"></i>${esc(c)}</span>`); });
     if(items.length) legend.push(`<div class="lgrp"><div class="lhead"><b>${esc(pp)}</b></div><div class="litems">${items.join('')}</div></div>`); }
   const chart=series.length?stackChart({labels:years.map(String),series,h:280,step:5000}).replace(/<div class="legend">[\s\S]*<\/div>$/,'')+`<div class="legend lgroups">${legend.join('')}</div>`:'<p class="muted">Nog geen inkomsten ingevuld.</p>';
@@ -1624,14 +1624,14 @@ function vPrognose(){
   const labels=pr.rows.map(r=>String(r.y));
   const cats=[...new Set(pr.rows.flatMap(r=>Object.keys(r.incByCat)))];
   const incDec=(S.settings.incView||'dec')==='dec';
-  const RAMPS=[['#0b2545','#1d5fbf','#5b8fd9','#93b8ea','#c4d8f3'],['#8a3510','#eb6834','#f2956b','#f7bea2','#fbdccb'],['#3f4a5a','#6b7685','#9aa3af','#c3c9d1','#e1e5ea']];
+  const RAMPS=[['#0b2545','#1d5fbf','#5b8fd9','#0f8b8d','#93b8ea','#3f7d20'],['#8a3510','#eb6834','#f2a541','#a8326e','#f7bea2','#c2571a'],['#3f4a5a','#6b7685','#9aa3af','#7a5c99','#c3c9d1','#2f4b7c']];
   const catOrder=[...S.incCats.filter(c=>cats.includes(c)), ...cats.filter(c=>!S.incCats.includes(c))];
   const persons=[...S.settings.people, 'Samen', 'Samen (categorietotaal)'].filter(pp=>pr.rows.some(r=>Object.keys(r.incByPC).some(k=>k.startsWith(pp+'|'))));
   const pRamp=pp=>{ const i=S.settings.people.indexOf(pp); return RAMPS[i>=0&&i<2?i:2]; };
   const incSeries=[]; const legendGroups=[];
-  for(const pp of persons){ const items=[];
-    catOrder.forEach((c,ci)=>{ const vals=pr.rows.map(r=>R(incDec?(r.decPC[pp+'|'+c]||0):(r.incByPC[pp+'|'+c]||0)/12,r)); if(!vals.some(v=>v>0)) return;
-      const color=pRamp(pp)[ci%5]; incSeries.push({name:pp+' · '+c,color,values:vals}); items.push(`<span><i style="background:${color}"></i>${esc(c)}</span>`); });
+  for(const pp of persons){ const items=[]; let ci=0;
+    catOrder.forEach(c=>{ const vals=pr.rows.map(r=>R(incDec?(r.decPC[pp+'|'+c]||0):(r.incByPC[pp+'|'+c]||0)/12,r)); if(!vals.some(v=>v>0)) return;
+      const color=pRamp(pp)[(ci++)%6]; incSeries.push({name:pp+' · '+c,color,values:vals}); items.push(`<span><i style="background:${color}"></i>${esc(c)}</span>`); });
     if(items.length){ let dates='';
       if(S.settings.people.includes(pp)){ const pi=personInfo(pp); const parts=[];
         if(pi.stop) parts.push('stopt met werken '+dNl(pi.stop));
