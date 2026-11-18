@@ -161,6 +161,9 @@ details summary{cursor:pointer;color:var(--b600);font-size:13.5px;margin-top:8px
   .tile .val{font-size:20px}
 }
 .sync{font-weight:600}.sync.ok{color:var(--ok)}.sync.fout{color:var(--bad)}.sync.lokaal,.sync.traag{color:var(--warn)}
+.pwrap{display:flex;gap:18px;align-items:center;flex-wrap:wrap}.plegs{flex:1;min-width:180px;display:flex;flex-direction:column;gap:4px;font-size:13px}
+.pleg{display:grid;grid-template-columns:12px minmax(0,1fr) auto 44px;gap:8px;align-items:center;padding:3px 6px;border-radius:7px}.pleg:hover{background:var(--b50)}.pleg i{width:10px;height:10px;border-radius:3px;display:inline-block}.pleg b{font-variant-numeric:tabular-nums}.pleg .muted{text-align:right;font-size:12px}
+tr.ysum td,tr.ysum th{background:var(--b100)!important;border-bottom:2px solid var(--b200)}
 </style>
 </head>
 <body>
@@ -546,6 +549,9 @@ function expenseBase(){
   return {cats, n:0, source:'verwacht'};
 }
 function dueActiveNow(r){ const i=ymI(curYm()); return ymI(r.start)<=i && (!r.end || ymI(r.end)>=i); }
+/* Vaste lasten die in de toekomst stoppen of beginnen: verschil met de vaste lasten van nu (per jaar) */
+function fixedNowAnnual(){ return sum(S.recurring.filter(r=>r.kind==='uit'&&dueActiveNow(r)).map(r=>+r.amount*12/(+r.freq||1))); }
+function fixedInMonths(y,m1,m2){ let t=0; for(let m=m1;m<=m2;m++){ const ym=y+'-'+pad(m); for(const r of S.recurring) if(r.kind==='uit'&&dueIn(r,ym)) t+=+r.amount; } return t; }
 function prognosis(){
   const cy=curY(); const st=monthStatus(curYm()); const base=expenseBase(); const baseM=sum(Object.values(base.cats));
   let v=st.total, infF=1, groF=1; const rows=[];
@@ -554,8 +560,9 @@ function prognosis(){
   for(let m=cm+1;m<=12;m++) for(const o of Object.values(expIncome(cy+'-'+pad(m)))) for(const x of Object.values(o)) rInc+=x;
   const rOne=sum(S.actuals.filter(a=>a.kind==='uit'&&!a.grid&&a.monthTotal==null&&a.date>todayStr()&&a.date.slice(0,4)===String(cy)).map(a=>+a.amount))
     + sum(S.expected.filter(e=>e.kind==='uit'&&e.ym>curYm()&&e.ym.slice(0,4)===String(cy)).map(e=>+e.amount));
-  const rExp=baseM*restM+rOne, rRet=v*(yp(cy).rend-S.settings.box3)/100*restM/12;
-  const rest={months:restM,begin:v,inc:rInc,exp:rExp,oneOff:rOne,ret:rRet,end:v+rRet+rInc-rExp};
+  const fixNow=fixedNowAnnual(), rFix=restM?fixedInMonths(cy,cm+1,12)-fixNow*restM/12:0;
+  const rExp=baseM*restM+rFix+rOne, rRet=v*(yp(cy).rend-S.settings.box3)/100*restM/12;
+  const rest={months:restM,begin:v,inc:rInc,exp:rExp,oneOff:rOne,fix:rFix,ret:rRet,end:v+rRet+rInc-rExp};
   v=rest.end;
   for(let y=cy+1;y<=cy+30;y++){
     const p=yp(y); infF*=1+p.infl/100; groF*=1+p.growth/100;
@@ -566,10 +573,11 @@ function prognosis(){
     const oneOff=sum(S.actuals.filter(a=>a.kind==='uit' && !a.grid && a.monthTotal==null && inY(a.date)).map(a=>+a.amount))
       + sum(S.expected.filter(e=>e.kind==='uit' && inY(lastDay(e.ym))).map(e=>+e.amount));
     const plan=sum(S.planned.filter(x=>+x.year===y).map(x=>x.amount))*infF + oneOff;
-    const exp=baseM*12*infF+plan;
+    const fixAdj=(fixedInMonths(y,1,12)-fixNow)*infF;
+    const exp=Math.max(0,baseM*12*infF+fixAdj)+plan;
     const begin=v; const ret=begin*(p.rend-S.settings.box3)/100;
     v=begin+ret+inc-exp;
-    rows.push({y,begin,inc,exp,plan,ret,end:v,infF,incByCat,incByPerson,incByPC,decPC,p});
+    rows.push({y,begin,inc,exp,plan,fixAdj,ret,end:v,infF,incByCat,incByPerson,incByPC,decPC,p});
   }
   return {rows,start:st,base,baseM,rest};
 }
@@ -917,6 +925,7 @@ const ICON = {
   instellingen:'<path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
 };
 const VIEWS = [['overzicht','Overzicht'],['rekeningen','Rekeningen'],['invoer','Invoeren'],['maand','Maand'],['analyse','Analyse'],['vast','Vaste posten'],['investeringen','Investeringen'],['rendement','Rendement'],['prognose','30 jaar'],['instellingen','Instellingen']];
+let anPieYear=null, anPieCat=null, anCmp=null;
 let view='overzicht', selYm=null, openHist={}, gridYm=null, gridOpen={}, anKind='uit', anPer='last12', anYm=null, anFrom=null, anTo=null, anFocus=null, anSubs=true, invKind='uit', invMode=null, invFwd=true, invView='maand';
 
 function renderNav(){
@@ -1221,6 +1230,83 @@ function stackChart({labels,series,h=260,W=760,totals=false,step=0}){
   const leg=series.filter(s=>s.values.some(v=>v>0)).map(s=>`<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('');
   return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img">${g}</svg></div><div class="legend">${leg}</div>`;
 }
+
+/* ===== Jaren vergelijken: staven per jaar, taartdiagrammen en vergelijking ===== */
+const SUB_PAL=['#0b2545','#1d5fbf','#5b8fd9','#93b8ea','#3d7cc9','#27496d','#7aa6e0','#c4d8f3','#1a4480','#b0c9ec'];
+function yearMonths(y){ const last=+y===curY()?+curYm().slice(5,7):12; return Array.from({length:last},(_,i)=>y+'-'+pad(i+1)); }
+function yearsWithData(kind){ return [...new Set(S.actuals.filter(a=>a.kind===kind).map(a=>a.date.slice(0,4)))].filter(y=>+y<=curY()).sort(); }
+function pieChart(items,{size=260,action='',hole=0.55,center=''}={}){
+  const tot=sum(items.map(i=>i.value)); if(!tot) return '<p class="muted">Geen bedragen.</p>';
+  const R=size/2-4, r0=R*hole, cx=size/2, cy=size/2; let a0=-Math.PI/2, g='';
+  const pt=(a,rr)=>[cx+rr*Math.cos(a), cy+rr*Math.sin(a)];
+  for(const it of items){ if(it.value<=0) continue; const frac=it.value/tot, a1=a0+frac*2*Math.PI, big=frac>0.5?1:0;
+    let d; if(frac>0.9999){ d=`M ${cx-R} ${cy} A ${R} ${R} 0 1 1 ${cx+R} ${cy} A ${R} ${R} 0 1 1 ${cx-R} ${cy} M ${cx-r0} ${cy} A ${r0} ${r0} 0 1 0 ${cx+r0} ${cy} A ${r0} ${r0} 0 1 0 ${cx-r0} ${cy} Z`; }
+    else { const [x1,y1]=pt(a0,R),[x2,y2]=pt(a1,R),[x3,y3]=pt(a1,r0),[x4,y4]=pt(a0,r0); d=`M ${x1} ${y1} A ${R} ${R} 0 ${big} 1 ${x2} ${y2} L ${x3} ${y3} A ${r0} ${r0} 0 ${big} 0 ${x4} ${y4} Z`; }
+    g+=`<path d="${d}" fill="${it.color}" stroke="#fff" stroke-width="1.5" ${action&&it.key!=null?`data-a="${action}" data-cat="${esc(it.key)}" style="cursor:pointer"`:''}><title>${esc(it.name)}: ${esc(E(it.value))} (${P(frac)})</title></path>`;
+    a0=a1; }
+  if(center) g+=`<text x="${cx}" y="${cy-4}" text-anchor="middle" font-size="12" fill="#5a6b85">${esc(center)}</text><text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="16" font-weight="700" fill="#10213a">${esc(E(tot))}</text>`;
+  const leg=items.filter(i=>i.value>0).map(it=>`<div class="pleg" ${action&&it.key!=null?`data-a="${action}" data-cat="${esc(it.key)}" style="cursor:pointer"`:''}><i style="background:${it.color}"></i><span>${esc(it.name)}</span><b>${esc(E(it.value))}</b><span class="muted">${P(it.value/tot)}</span></div>`).join('');
+  return `<div class="pwrap"><svg viewBox="0 0 ${size} ${size}" style="width:${size}px;max-width:100%;height:auto;flex:none" role="img">${g}</svg><div class="plegs">${leg}</div></div>`;
+}
+function yearBars(kind,years,sel){
+  const vals=years.map(y=>anData(kind,yearMonths(y)).total); const max=Math.max(1,...vals);
+  const W=Math.max(320,years.length*90), H=220, pl=64, pb=28, pt=14; const bw=Math.min(56,(W-pl-20)/years.length*0.6); const ticks=niceTicks(0,max); const hi=ticks[ticks.length-1];
+  const y=v=>pt+(H-pt-pb)*(1-v/hi); let g='';
+  for(const t of ticks) g+=`<line x1="${pl}" x2="${W-10}" y1="${y(t)}" y2="${y(t)}" stroke="${t===0?'#b8c7dc':'#e6edf6'}"/><text x="${pl-8}" y="${y(t)+4}" text-anchor="end" font-size="11" fill="#5a6b85">${esc(eurC.format(t))}</text>`;
+  years.forEach((yr,i)=>{ const cx=pl+(i+.5)*(W-pl-10)/years.length, on=String(sel)===yr;
+    g+=`<rect x="${cx-bw/2}" y="${y(vals[i])}" width="${bw}" height="${Math.max(0,y(0)-y(vals[i]))}" rx="3" fill="${on?'#1d5fbf':'#93b8ea'}" data-a="pieYear" data-y="${yr}" style="cursor:pointer"><title>${yr}: ${esc(E(vals[i]))}${+yr===curY()?' (tot nu)':''} – klik voor de verdeling</title></rect>`;
+    g+=`<text x="${cx}" y="${H-9}" text-anchor="middle" font-size="12" font-weight="${on?700:400}" fill="${on?'#10213a':'#5a6b85'}" data-a="pieYear" data-y="${yr}" style="cursor:pointer">${yr}${+yr===curY()?'*':''}</text>`; });
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" style="max-height:240px" role="img">${g}</svg></div>`;
+}
+function groupedCompare(rows,years){
+  // rows: [{name,values:{year:value}}]
+  if(!rows.length) return '<p class="muted">Geen bedragen om te vergelijken.</p>';
+  const pal=['#93b8ea','#5b8fd9','#1d5fbf','#0b2545','#eb6834','#1baf7a','#eda100','#e87ba4'];
+  const max=Math.max(1,...rows.flatMap(r=>years.map(y=>r.values[y]||0)));
+  const lab=170, W=760, bh=Math.max(8,Math.min(16,30/years.length)), gap=4, rowH=years.length*(bh+2)+gap*3; const H=rows.length*rowH+24;
+  const xw=W-lab-90, x=v=>lab+xw*(v/max); let g='';
+  rows.forEach((r,i)=>{ const top=i*rowH+6;
+    g+=`<text x="${lab-8}" y="${top+rowH/2}" text-anchor="end" font-size="12" fill="#10213a">${esc(r.name.length>24?r.name.slice(0,23)+'…':r.name)}<title>${esc(r.name)}</title></text>`;
+    years.forEach((y,j)=>{ const v=r.values[y]||0, yy=top+j*(bh+2);
+      g+=`<rect x="${lab}" y="${yy}" width="${Math.max(0,x(v)-lab)}" height="${bh}" rx="2" fill="${pal[j%pal.length]}"><title>${esc(r.name)} · ${y}: ${esc(E(v))}</title></rect><text x="${x(v)+5}" y="${yy+bh-2}" font-size="10.5" fill="#5a6b85">${v?esc(E(v)):''}</text>`; });
+    if(i<rows.length-1) g+=`<line x1="${lab}" x2="${W-10}" y1="${top+rowH-gap}" y2="${top+rowH-gap}" stroke="#eef2f8"/>`; });
+  const leg=years.map((y,j)=>`<span><i style="background:${pal[j%pal.length]}"></i>${y}${+y===curY()?' (tot nu)':''}</span>`).join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img">${g}</svg></div><div class="legend">${leg}</div>`;
+}
+function yearCompareSection(kind){
+  const years=yearsWithData(kind); if(!years.length) return '';
+  if(!anPieYear || !years.includes(String(anPieYear))) anPieYear=years[years.length-1];
+  const dy=anData(kind,yearMonths(anPieYear));
+  if(anPieCat && !dy.cats[anPieCat]) anPieCat=null;
+  const cats=Object.entries(dy.cats).sort((a,b)=>b[1].total-a[1].total);
+  const EXTRA=['#7a5c99','#0f8b8d','#c2571a','#5b6b85','#a8326e','#3f7d20','#b38f00','#2f4b7c'];let ex=0;
+  const pieCats=cats.map(([c,o])=>{ let col=catColor(kind,c); if(col===REST_COLOR) col=EXTRA[(ex++)%EXTRA.length]; return {key:c,name:c,value:o.total,color:col}; });
+  let subPie='';
+  if(anPieCat){ const subs=Object.entries(dy.cats[anPieCat].subs).sort((a,b)=>b[1]-a[1]);
+    subPie = subs.length ? pieChart(subs.map(([sb,v],i)=>({name:sb,value:v,color:SUB_PAL[i%SUB_PAL.length]})),{size:220,center:anPieCat})
+                         : '<p class="muted small">Deze categorie heeft geen subcategorieën.</p>'; }
+  if(!anCmp) anCmp=years.slice(-2);
+  anCmp=anCmp.filter(y=>years.includes(y)); if(!anCmp.length) anCmp=[years[years.length-1]];
+  const cmpData=Object.fromEntries(anCmp.map(y=>[y,anData(kind,yearMonths(y))]));
+  let rows;
+  if(anPieCat){ const names=[...new Set(anCmp.flatMap(y=>Object.keys(cmpData[y].cats[anPieCat]?.subs||{})))];
+    rows=names.map(n=>({name:n,values:Object.fromEntries(anCmp.map(y=>[y,cmpData[y].cats[anPieCat]?.subs[n]||0]))}));
+    if(!rows.length) rows=[{name:anPieCat,values:Object.fromEntries(anCmp.map(y=>[y,cmpData[y].cats[anPieCat]?.total||0]))}]; }
+  else { const names=[...new Set(anCmp.flatMap(y=>Object.keys(cmpData[y].cats)))];
+    rows=names.map(n=>({name:n,values:Object.fromEntries(anCmp.map(y=>[y,cmpData[y].cats[n]?.total||0]))})); }
+  rows.sort((a,b)=>Math.max(...anCmp.map(y=>b.values[y]))-Math.max(...anCmp.map(y=>a.values[y])));
+  const what=kind==='uit'?'uitgaven':'inkomsten';
+  return `<div class="card" style="margin-top:16px"><h2>${kind==='uit'?'Uitgaven':'Inkomsten'} per jaar</h2>
+    <p class="small muted">Klik op een staaf om de verdeling van dat jaar te zien. ${years.includes(String(curY()))?`* ${curY()} loopt nog: t/m ${mLong(curYm())}.`:''}</p>${yearBars(kind,years,anPieYear)}</div>
+  <div class="grid angrid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+    <div class="card"><h2>Verdeling ${anPieYear} per categorie</h2><p class="small muted">Klik op een taartdeel (of een naam) voor de verdeling in subcategorieën.</p>${pieChart(pieCats,{action:'pieCat',center:'Totaal '+anPieYear})}</div>
+    <div class="card">${anPieCat?`<div class="row"><h2 style="margin:0"><i class="sw" style="background:${catColor(kind,anPieCat)}"></i>${esc(anPieCat)} in ${anPieYear}</h2><span class="spacer"></span><button class="btn ghost sm" data-a="pieCat" data-cat="">Sluiten ✕</button></div><p class="small muted">Verdeling in ${kind==='in'?'personen':'subcategorieën'}.</p>${subPie}`:`<h2>Subcategorieën</h2><p class="muted small">Klik links op een taartdeel om hier de verdeling in ${kind==='in'?'personen':'subcategorieën'} te zien.</p>`}</div>
+  </div>
+  <div class="card"><div class="row"><h2 style="margin:0">Jaren vergelijken${anPieCat?': '+esc(anPieCat)+' per '+(kind==='in'?'persoon':'subcategorie'):': '+what+' per categorie'}</h2><span class="spacer"></span>
+    <div class="row" style="gap:10px">${years.map(y=>`<label class="small" style="display:flex;gap:5px;align-items:center;font-weight:600;color:var(--b800)"><input type="checkbox" class="cmpYear" value="${y}" ${anCmp.includes(y)?'checked':''}> ${y}</label>`).join('')}</div></div>
+    <p class="small muted" style="margin-top:8px">Vink de jaren aan die je wilt vergelijken. ${anPieCat?'Je vergelijkt nu de subcategorieën van <b>'+esc(anPieCat)+'</b>; sluit de categorie rechtsboven om weer alle categorieën te zien.':'Klik op een taartdeel hierboven om de subcategorieën van één categorie te vergelijken.'}</p>
+    ${groupedCompare(rows,anCmp)}</div>`;
+}
 function vAnalyse(){
   const kind=anKind, months=anMonths(), d=anData(kind,months), c=ymI(curYm());
   const years=[...new Set(S.actuals.map(a=>a.date.slice(0,4)))].filter(y=>y<=String(curY())).sort().reverse();
@@ -1259,6 +1345,7 @@ function vAnalyse(){
     <div class="card"><h2>${kind==='uit'?'Uitgaven':'Inkomsten'} per categorie</h2><p class="small muted">Van groot naar klein${kind==='in'?', per persoon uitgesplitst':', met de subcategorieën eronder'}. Klik op een categorie voor het verloop.</p>${rankedBars(kind,d)}</div>
     <div class="anside">${focusHtml||`<div class="card"><h2>Verloop van één categorie</h2><p class="muted small">Klik op een categorie om hier het verloop per maand te zien${kind==='in'?', uitgesplitst per persoon':', uitgesplitst per subcategorie'}.</p></div>`}</div>
   </div>
+  ${yearCompareSection(kind)}
   ${kind==='uit'?'<p class="small muted">Afschrijving is de maandelijkse verdeling van investeringen, geen betaling. Investeringen zelf tellen hier niet als uitgave.</p>':''}`;
 }
 function vInvoerJaar(){
@@ -1288,19 +1375,21 @@ function vInvoerJaar(){
   }
   let ytop='', yund='';
   if(kind==='uit'){ const trs=months.map(monthTotalRec);
-    ytop=`<tr class="gtot"><th class="yname" title="Optioneel: het totaal van alle uitgaven in die maand">Totaal maand</th>${months.map((m,i)=>`<td><input class="gcell yc" data-ym="${m}" data-kind="uit" data-mode="act" data-cat="__TOTAL__" data-sub="" inputmode="decimal" value="${trs[i]?numIn(trs[i].monthTotal):''}" title="Totaal uitgaven ${mLong(m)} – optioneel"></td>`).join('')}<td></td></tr>`;
+    ytop=`<tr class="gtot"><th class="yname" title="Optioneel: vul het totaal van alle uitgaven in die maand in; het deel dat niet over categorieën is verdeeld komt bij &quot;Niet verdeeld&quot;">Maandtotaal invullen</th>${months.map((m,i)=>`<td><input class="gcell yc" data-ym="${m}" data-kind="uit" data-mode="act" data-cat="__TOTAL__" data-sub="" inputmode="decimal" value="${trs[i]?numIn(trs[i].monthTotal):''}" title="Totaal uitgaven ${mLong(m)} – optioneel"></td>`).join('')}<td></td></tr>`;
     if(trs.some(Boolean)){ yund=`<tr class="gcat"><th class="yname">${UNDIST}</th>${months.map((m,i)=>{ const t=trs[i]; if(t) colTot[i]+=t.amount; return `<td>${t?`<input class="gcell yc" readonly data-calc="1" tabindex="-1" data-ym="${m}" data-kind="uit" data-cat="${UNDIST}" value="${numIn(Math.round(t.amount*100)/100)}" title="Rest van het maandtotaal">`:''}</td>`; }).join('')}<td class="n ytot">${E(sum(trs.map(t=>t?t.amount:0)))}</td></tr>`; } }
   const filled=months.filter(m=>S.actuals.some(a=>a.kind===kind&&!isInv(a)&&a.date.slice(0,7)===m)).length;
   return `<div class="row"><div><h1>Invoeren</h1><p class="sub">Jaaroverzicht: alle maanden naast elkaar. Klik in een vakje om een bedrag te wijzigen; alles wordt meteen opgeslagen.</p></div><span class="spacer"></span>
     ${`<div class="toggle" style="margin-right:8px"><button data-a="invView" data-v="maand">Per maand</button><button data-a="invView" data-v="jaar" class="on">Jaaroverzicht</button></div>`}<div class="toggle"><button data-a="invKind" data-v="uit" class="${kind==='uit'?'on':''}">Uitgaven</button><button data-a="invKind" data-v="in" class="${kind==='in'?'on':''}">Inkomsten</button></div></div>${demoBanner()}
+  <div class="grid g3" style="margin-bottom:16px"><div class="tile"><div class="lbl">Totaal ${kind==='uit'?'uitgaven':'inkomsten'} ${y}</div><div class="val">${E(sum(colTot))}</div><div class="note">${mode==='act'?'werkelijke bedragen':'verwachte bedragen'}</div></div>
+    <div class="tile alt"><div class="lbl">Gemiddeld per maand</div><div class="val">${E(sum(colTot)/Math.max(1,colTot.filter(v=>v).length))}</div><div class="note">over ${colTot.filter(v=>v).length} maand${colTot.filter(v=>v).length===1?'':'en'} met bedragen</div></div>
+    <div class="tile alt3"><div class="lbl">Hoogste maand</div><div class="val">${(()=>{ const mx=Math.max(0,...colTot); return mx?E(mx):'–'; })()}</div><div class="note">${(()=>{ const mx=Math.max(0,...colTot); return mx?mLong(months[colTot.indexOf(mx)]):''; })()}</div></div></div>
   <div class="card"><div class="row"><button class="btn sec sm" data-a="gYear" data-d="-1" title="Vorig jaar">‹</button><b style="font-size:18px">${y}</b><button class="btn sec sm" data-a="gYear" data-d="1" title="Volgend jaar">›</button>
     <span class="small muted">${mode==='act'?`${filled} van de 12 maanden ingevuld`:'verwachte bedragen'}</span>
     ${kind==='in'?`<div class="toggle" style="margin-left:8px"><button data-a="invMode" data-v="act" class="${mode==='act'?'on':''}">Werkelijk</button><button data-a="invMode" data-v="exp" class="${mode==='exp'?'on':''}">Verwachting</button></div>`:''}
     <span class="spacer"></span>${mode==='exp'?`<label class="small" style="display:flex;gap:6px;align-items:center;font-weight:600;color:var(--b800)"><input type="checkbox" id="invFwd" ${invFwd?'checked':''}> Wijziging geldt ook voor alle maanden hierna</label>`:''}</div>
     <div class="small muted" style="margin:8px 0 10px">Navigeren: <b>Tab</b> = volgende maand, <b>Enter</b> of <b>↓ ↑</b> = categorie eronder/erboven. Een gestippeld vakje wordt berekend uit de subcategorieën. Een blauwe stip betekent dat er ook losse invoer is.</div>
     <div class="ywrap"><table class="ytab"><thead><tr><th class="yname">Categorie</th>${months.map(m=>`<th class="${m===curYm()?'ynow':''}"><a href="#invoer" data-a="gOpenMonth" data-ym="${m}" title="Open ${mLong(m)}">${MN[+m.slice(5)-1]}</a></th>`).join('')}<th class="n">Totaal</th></tr></thead>
-    <tbody>${ytop}${rows}${yund}</tbody>
-    <tfoot><tr><th class="yname">Totaal</th>${colTot.map(v=>`<td class="n">${v?E(v):''}</td>`).join('')}<td class="n"><b>${E(sum(colTot))}</b></td></tr></tfoot></table></div></div>`;
+    <tbody><tr class="gtot ysum"><th class="yname">Totaal ${kind==='uit'?'uitgaven':'inkomsten'}</th>${colTot.map(v=>`<td class="n"><b>${v?E(v):''}</b></td>`).join('')}<td class="n"><b>${E(sum(colTot))}</b></td></tr>${ytop}${rows}${yund}</tbody></table></div></div>`;
 }
 function looseModal(kind,ym,cat){
   const items=S.actuals.filter(a=>!a.grid&&a.kind===kind&&!isInv(a)&&a.date.slice(0,7)===ym&&a.cat===cat);
@@ -1376,7 +1465,7 @@ function vPrognose(){
   const people=[...new Set(pr.rows.flatMap(r=>Object.keys(r.incByPerson)))];
   const low=pr.rows.find(r=>r.end<0);
   return `<div class="row"><div><h1>Langetermijnplanning: 30 jaar</h1><p class="sub">Een berekening op basis van jullie eigen invoer. Geen garantie en geen beleggingsadvies.</p></div><span class="spacer"></span><div class="toggle"><button data-a="real" data-v="0" class="${real?'':'on'}">Nominale euro's</button><button data-a="real" data-v="1" class="${real?'on':''}">Euro's van nu</button></div></div>${demoBanner()}
-  <div class="info"><b>Uitgangspunten:</b> start met het huidige bekende vermogen (${E(pr.start.total)}${pr.start.missing.length?', <b>onvolledig</b>':''}). ${pr.rest.months?`Voor de rest van ${curY()} (${pr.rest.months} maand${pr.rest.months===1?'':'en'}) tellen de verwachte inkomsten (${E(pr.rest.inc)}), uitgaven (${E(pr.rest.exp)}) en rendement (${E(pr.rest.ret)}) mee, dus op 1 januari ${curY()+1} is het verwachte vermogen ${E(pr.rest.end)}.`:`Op 1 januari ${curY()+1} is het verwachte vermogen ${E(pr.rest.end)}.`} Uitgaven: ${pr.base.source==='werkelijk'?`gemiddelde van de werkelijke uitgaven over ${pr.base.n} maand${pr.base.n===1?'':'en'} binnen de laatste 24 maanden`:'<b>nog geen werkelijke uitgaven</b>, dus de verwachte vaste lasten'}: ${E(pr.baseM)} per maand, zonder afschrijving. Grote uitgaven komen uit de investeringen en losse uitgaven die je met een datum in de toekomst hebt ingevoerd; die tellen volledig mee in het jaar van betaling. Inkomsten: de verwachte inkomsten uit Vaste posten en uit je eigen verwachtingen bij Invoeren, verhoogd met de inkomensgroei (bedragen gelden als euro's van nu). Rendement over het vermogen aan het begin van elk jaar, min ${numIn(S.settings.box3)}% vermogensbelasting.</div>
+  <div class="info"><b>Uitgangspunten:</b> start met het huidige bekende vermogen (${E(pr.start.total)}${pr.start.missing.length?', <b>onvolledig</b>':''}). ${pr.rest.months?`Voor de rest van ${curY()} (${pr.rest.months} maand${pr.rest.months===1?'':'en'}) tellen de verwachte inkomsten (${E(pr.rest.inc)}), uitgaven (${E(pr.rest.exp)}) en rendement (${E(pr.rest.ret)}) mee, dus op 1 januari ${curY()+1} is het verwachte vermogen ${E(pr.rest.end)}.`:`Op 1 januari ${curY()+1} is het verwachte vermogen ${E(pr.rest.end)}.`} Uitgaven: ${pr.base.source==='werkelijk'?`gemiddelde van de werkelijke uitgaven over ${pr.base.n} maand${pr.base.n===1?'':'en'} binnen de laatste 24 maanden`:'<b>nog geen werkelijke uitgaven</b>, dus de verwachte vaste lasten'}: ${E(pr.baseM)} per maand, zonder afschrijving. Vaste lasten die volgens Vaste posten in de toekomst stoppen of beginnen (bijv. een hypotheek die is afgelost), worden vanaf dat moment van dit gemiddelde afgetrokken of erbij opgeteld. Grote uitgaven komen uit de investeringen en losse uitgaven die je met een datum in de toekomst hebt ingevoerd; die tellen volledig mee in het jaar van betaling. Inkomsten: de verwachte inkomsten uit Vaste posten en uit je eigen verwachtingen bij Invoeren, verhoogd met de inkomensgroei (bedragen gelden als euro's van nu). Rendement over het vermogen aan het begin van elk jaar, min ${numIn(S.settings.box3)}% vermogensbelasting.</div>
   ${low?`<div class="warn">Volgens deze berekening wordt het vermogen in <b>${low.y}</b> negatief.</div>`:''}
   <div class="card"><h2>Verwacht vermogen${real?' (euro\'s van nu)':''}</h2>${comboChart({labels:['Nu',...labels],line:{name:'Vermogen eind van het jaar',values:[pr.start.total,...pr.rows.map(r=>R(r.end,r))],color:'#1d5fbf'},bars:[{name:'Inkomsten per jaar',values:[0,...pr.rows.map(r=>R(r.inc,r))],color:'#93b8ea'},{name:'Uitgaven per jaar',values:[0,...pr.rows.map(r=>R(r.exp,r))],color:'#e89a6a'}]})}<p class="small muted" style="margin-top:6px">Het eerste punt is het vermogen van nu. Elk volgend punt is het vermogen aan het eind van dat jaar: vermogen aan het begin + rendement + inkomsten − uitgaven. Daalt het vermogen in een jaar niet terwijl je meer uitgeeft dan je verdient, dan maakt het rendement het verschil goed.</p></div>
   <div class="card"><div class="row"><h2 style="margin:0">Verwachte netto-inkomsten per maand, per persoon${real?' (euro\'s van nu)':''}</h2><span class="spacer"></span>
@@ -1397,7 +1486,7 @@ function vPrognose(){
   <div class="card"><h2>Aannames per jaar en uitkomst</h2><p class="small muted">Pas de percentages per jaar aan. Een leeg vakje gebruikt de standaardwaarde uit Instellingen (inflatie ${numIn(S.settings.infl)}%, rendement ${numIn(S.settings.rend)}%, inkomensgroei ${numIn(S.settings.growth)}%).</p>
   <div class="tablewrap"><table><tr><th>Jaar</th><th class="n">Inflatie %</th><th class="n">Rendement %</th><th class="n">Inkomensgroei %</th><th class="n">Begin</th><th class="n">Inkomsten</th><th class="n">Uitgaven</th><th class="n">Rendement</th><th class="n">Eind</th></tr>
   ${pr.rows.map(r=>{const o=S.years[r.y]||{}; const inp=(k)=>`<input class="cell" data-year="${r.y}" data-key="${k}" inputmode="decimal" value="${o[k]!=null?numIn(o[k]):''}" placeholder="${numIn(S.settings[k])}">`;
-    return `<tr><td>${r.y}</td><td class="n">${inp('infl')}</td><td class="n">${inp('rend')}</td><td class="n">${inp('growth')}</td><td class="n">${E(R(r.begin,r))}</td><td class="n">${E(R(r.inc,r))}</td><td class="n">${E(R(r.exp,r))}${r.plan?`<div class="small muted">waarvan gepland en investeringen ${E(R(r.plan,r))}</div>`:''}</td><td class="n">${E(R(r.ret,r))}</td><td class="n ${r.end<0?'neg':''}"><b>${E(R(r.end,r))}</b></td></tr>`;}).join('')}</table></div></div>`;
+    return `<tr><td>${r.y}</td><td class="n">${inp('infl')}</td><td class="n">${inp('rend')}</td><td class="n">${inp('growth')}</td><td class="n">${E(R(r.begin,r))}</td><td class="n">${E(R(r.inc,r))}</td><td class="n">${E(R(r.exp,r))}${r.plan?`<div class="small muted">waarvan gepland en investeringen ${E(R(r.plan,r))}</div>`:''}${Math.abs(r.fixAdj)>=1?`<div class="small muted">vaste lasten ${r.fixAdj<0?'lager':'hoger'} dan nu: ${r.fixAdj<0?'−':'+'}${E(Math.abs(R(r.fixAdj,r)))}</div>`:''}</td><td class="n">${E(R(r.ret,r))}</td><td class="n ${r.end<0?'neg':''}"><b>${E(R(r.end,r))}</b></td></tr>`;}).join('')}</table></div></div>`;
 }
 function catUsage(kind,cat,sub){
   const n=S.actuals.filter(a=>a.kind===kind&&a.cat===cat&&(sub==null||(a.sub||'')===sub)).length
@@ -1550,7 +1639,9 @@ document.addEventListener('click',e=>{
     case 'invView': invView=b.dataset.v; render(); break;
     case 'gYear': gridYm=iYm(ymI(invYm())+12*(+b.dataset.d)); invMode=null; render(); break;
     case 'gOpenMonth': e.preventDefault(); gridYm=b.dataset.ym; invView='maand'; invMode=null; render(); window.scrollTo(0,0); break;
-    case 'anKind': anKind=b.dataset.v; anFocus=null; render(); break;
+    case 'anKind': anKind=b.dataset.v; anFocus=null; anPieCat=null; render(); break;
+    case 'pieYear': anPieYear=b.dataset.y; anPieCat=null; keepScroll(); break;
+    case 'pieCat': anPieCat=(b.dataset.cat&&anPieCat!==b.dataset.cat)?b.dataset.cat:null; keepScroll(); break;
     case 'anFocus': anFocus=(b.dataset.cat&&anFocus!==b.dataset.cat)?b.dataset.cat:null; keepScroll(); break;
     case 'mPrev': selYm=iYm(ymI(selYm||curYm())-1); render(); break;
     case 'mNext': selYm=iYm(ymI(selYm||curYm())+1); render(); break;
@@ -1635,6 +1726,7 @@ document.addEventListener('change',e=>{
   if(e.target.id==='anFrom'||e.target.id==='anTo'){ const v=nlToYm(e.target.value); if(!v){ toast('Vul een maand in als mm-jjjj'); return; } if(e.target.id==='anFrom') anFrom=v; else anTo=v; render(); }
   if(e.target.id==='anYm'){ const v=nlToYm(e.target.value); if(!v){ toast('Vul een maand in als mm-jjjj'); return; } anYm=v; render(); }
   if(e.target.id==='anSubs'){ anSubs=e.target.checked; keepScroll(); }
+  if(e.target.classList.contains('cmpYear')){ anCmp=[...document.querySelectorAll('.cmpYear:checked')].map(x=>x.value).sort(); keepScroll(); }
   if(e.target.classList.contains('cell')){
     const y=e.target.dataset.year, k=e.target.dataset.key, v=parseNum(e.target.value);
     const o=S.years[y]||(S.years[y]={}); if(isNaN(v)) delete o[k]; else o[k]=v; if(!Object.keys(o).length) delete S.years[y];
