@@ -1060,25 +1060,42 @@ function incomeConflicts(){
   const exp=S.expected.filter(e=>e.kind==='in' && e.ym>=c);
   return {plan, exp};
 }
+function onceForm(person){
+  form({title:'Eenmalig bedrag'+(person?' – '+person:''), values:{person:person||'',cat:S.incCats.includes('Overig')?'Overig':S.incCats[0],ym:curYm()},
+    extra:'<div class="info">Voor een bedrag dat je één keer ontvangt, bijvoorbeeld een uitkering, bonus, erfenis of de uitbetaling van een spaarpot. Het telt mee in die ene maand.</div>',
+    fields:[
+      {k:'name',label:'Omschrijving',req:true,ph:'Bijv. Uitkering spaarregeling'},
+      {k:'amount',label:'Netto bedrag (€)',type:'num',req:true},
+      {k:'ym',label:'Maand van ontvangst',type:'month',req:true},
+      {k:'cat',label:'Soort',type:'select',options:S.incCats},
+      {k:'person',label:'Van wie?',type:'select',options:[['','Samen'],...S.settings.people.map(p=>[p,p])]}
+    ], onSave:o=>{ S.recurring.push({id:uid(),kind:'in',name:o.name,amount:o.amount,cat:o.cat,person:o.person,freq:1,start:o.ym,end:o.ym,day:''}); toast('Eenmalig bedrag opgeslagen'); }});
+}
 function vInkomen(){
   const people=[...S.settings.people,'Samen'];
   const recs=S.recurring.filter(r=>r.kind==='in');
   const per=pp=>recs.filter(r=>(r.person||'Samen')===pp).sort((a,b)=>a.start<b.start?-1:1);
   const until=r=>r.end?mLong(r.end):'<span class="muted">geen einde</span>';
   const card=pp=>{ const list=per(pp);
-    return `<div class="card"><div class="row"><h2 style="margin:0">${esc(pp)}</h2><span class="spacer"></span><button class="btn sm" data-a="incAdd" data-p="${esc(pp==='Samen'?'':pp)}">+ Inkomen toevoegen</button></div>
-      ${list.length?`<div class="tablewrap" style="margin-top:10px"><table><tr><th>Soort</th><th>Omschrijving</th><th class="n">Netto per maand</th><th>Vanaf</th><th>Tot en met</th><th></th></tr>${list.map(r=>{ const pm=r.amount/(+r.freq||1);
-        return `<tr><td>${esc(r.cat)}</td><td>${esc(r.name)}${+r.freq>1?` <span class="small muted">(${E(r.amount)} ${FREQ[r.freq].toLowerCase()})</span>`:''}</td><td class="n"><b>${E(pm)}</b></td><td>${mLong(r.start)}</td><td>${until(r)}</td><td class="n" style="white-space:nowrap"><button class="btn ghost sm" data-a="editRec" data-id="${r.id}">Wijzig</button><button class="btn ghost sm" data-a="delRec" data-id="${r.id}" title="Verwijderen">✕</button></td></tr>`; }).join('')}</table></div>`
+    return `<div class="card"><div class="row"><h2 style="margin:0">${esc(pp)}</h2><span class="spacer"></span><button class="btn sec sm" data-a="incOnce" data-p="${esc(pp==='Samen'?'':pp)}">+ Eenmalig bedrag</button><button class="btn sm" data-a="incAdd" data-p="${esc(pp==='Samen'?'':pp)}">+ Inkomen toevoegen</button></div>
+      ${list.length?`<div class="tablewrap" style="margin-top:10px"><table><tr><th>Soort</th><th>Omschrijving</th><th class="n">Netto bedrag</th><th>Vanaf / maand</th><th>Tot en met</th><th></th></tr>${list.map(r=>{ const pm=r.amount/(+r.freq||1);
+        const once=r.end&&r.end===r.start;
+        return `<tr><td>${esc(r.cat)}</td><td>${esc(r.name)}${once?' <span class="badge">eenmalig</span>':+r.freq>1?` <span class="small muted">(${E(r.amount)} ${FREQ[r.freq].toLowerCase()})</span>`:''}</td><td class="n"><b>${once?E(r.amount):E(pm)}</b>${once?'<div class="small muted">in één keer</div>':''}</td><td>${mLong(r.start)}</td><td>${once?'<span class="muted">–</span>':until(r)}</td><td class="n" style="white-space:nowrap"><button class="btn ghost sm" data-a="editRec" data-id="${r.id}">Wijzig</button><button class="btn ghost sm" data-a="delRec" data-id="${r.id}" title="Verwijderen">✕</button></td></tr>`; }).join('')}</table></div>`
       :`<p class="muted small" style="margin-top:8px">${pp==='Samen'?'Inkomsten die niet bij één persoon horen, bijvoorbeeld huur van een tweede woning.':'Nog niets ingevuld. Voeg bijvoorbeeld salaris, pensioen en AOW toe, elk met een begin- en einddatum.'}</p>`}</div>`; };
-  // grafiek: gemiddeld netto per maand per jaar, per persoon (euro's van nu, zonder groei)
+  // grafiek: totaal netto per jaar, per persoon en per soort inkomen (euro's van nu)
   const cy=curY(), years=Array.from({length:31},(_,i)=>cy+i);
-  const pal={}; S.settings.people.forEach((p,i)=>pal[p]=['#1d5fbf','#eb6834','#1baf7a','#e87ba4'][i%4]); pal['Samen']='#9aa3af';
-  const byP=Object.fromEntries(people.map(p=>[p,years.map(()=>0)]));
+  const RAMPS=[['#0b2545','#1d5fbf','#5b8fd9','#93b8ea','#c4d8f3'],['#8a3510','#eb6834','#f2956b','#f7bea2','#fbdccb'],['#3f4a5a','#6b7685','#9aa3af','#c3c9d1','#e1e5ea']];
+  const ramp=pp=>{ const i=S.settings.people.indexOf(pp); return RAMPS[i>=0&&i<2?i:2]; };
+  const tot={};
   years.forEach((y,yi)=>{ for(let m=1;m<=12;m++){ const ym=y+'-'+pad(m); if(ym<curYm()) continue;
-      const o=expIncome(ym); for(const [c,subs] of Object.entries(o)) for(const [sb,v] of Object.entries(subs)){ const pp=people.includes(sb)?sb:'Samen'; byP[pp][yi]+=v; } }
-    const nm=y===cy?13-+curYm().slice(5,7):12; for(const p of people) byP[p][yi]/=nm; });
-  const series=people.filter(p=>byP[p].some(v=>v>0)).map(p=>({name:p,color:pal[p],values:byP[p]}));
-  const chart=series.length?stackChart({labels:years.map(String),series,h:260,step:500}):'<p class="muted">Nog geen inkomsten ingevuld.</p>';
+      for(const [c,subs] of Object.entries(expIncome(ym))) for(const [sb,v] of Object.entries(subs)){ const pp=people.includes(sb)?sb:'Samen'; const k=pp+'|'+c; (tot[k] ||= years.map(()=>0))[yi]+=v; } } });
+  const catOrder=[...S.incCats,...new Set(Object.keys(tot).map(k=>k.split('|')[1]).filter(c=>!S.incCats.includes(c)))];
+  const series=[], legend=[];
+  for(const pp of people){ const items=[];
+    catOrder.forEach((c,ci)=>{ const vals=tot[pp+'|'+c]; if(!vals||!vals.some(v=>v>0)) return; const col=ramp(pp)[ci%5];
+      series.push({name:pp+' · '+c,color:col,values:vals}); items.push(`<span><i style="background:${col}"></i>${esc(c)}</span>`); });
+    if(items.length) legend.push(`<div class="lgrp"><div class="lhead"><b>${esc(pp)}</b></div><div class="litems">${items.join('')}</div></div>`); }
+  const chart=series.length?stackChart({labels:years.map(String),series,h:280,step:5000}).replace(/<div class="legend">[\s\S]*<\/div>$/,'')+`<div class="legend lgroups">${legend.join('')}</div>`:'<p class="muted">Nog geen inkomsten ingevuld.</p>';
   const cf=incomeConflicts();
   const warn=(cf.plan.length||cf.exp.length)?`<div class="warn"><b>Let op:</b> bij <b>Invoeren</b> staan ook nog verwachte inkomsten voor de toekomst${cf.plan.length?` (${cf.plan.length} keer bij het jaaroverzicht)`:''}${cf.exp.length?` en ${cf.exp.length} losse verwachting${cf.exp.length===1?'':'en'}`:''}. Die gaan vóór wat hier staat en kunnen dubbel tellen of inkomsten wegdrukken. Wil je alles op deze ene pagina regelen? <button class="btn sm" data-a="incClear" style="margin-left:6px">Verwachtingen bij Invoeren wissen</button><div class="small" style="margin-top:4px">Werkelijk ontvangen bedragen uit het verleden blijven gewoon staan.</div></div>`:'';
   return `<div class="row"><div><h1>Inkomen plannen</h1><p class="sub">Eén plek voor al jullie netto inkomsten, nu en in de toekomst.</p></div></div>${demoBanner()}
@@ -1086,7 +1103,7 @@ function vInkomen(){
   ${warn}
   ${people.filter(p=>p!=='Samen').map(card).join('')}
   ${card('Samen')}
-  <div class="card"><h2>Zo ziet jullie inkomen eruit, per jaar</h2><p class="small muted">Gemiddeld netto per maand in euro's van nu, per persoon. Hier zie je meteen of salaris, pensioen en AOW op het juiste moment beginnen en stoppen.</p>${chart}</div>`;
+  <div class="card"><h2>Zo ziet jullie inkomen eruit, per jaar</h2><p class="small muted">Totaal netto per jaar in euro's van nu, per persoon en per soort inkomen (${esc(S.settings.people[0]||'')} in blauwtinten${S.settings.people[1]?', '+esc(S.settings.people[1])+' in oranjetinten':''}). Hier zie je meteen of salaris, pensioen en AOW op het juiste moment beginnen en stoppen, en in welk jaar een eenmalig bedrag binnenkomt. ${cy} telt vanaf deze maand. Beweeg over een blok voor het bedrag.</p>${chart}</div>`;
 }
 function vVrij(){
   const pl=vrijPlan(vrijH), rows=pl.rows, minR=rows.reduce((a,r)=>r.end<a.end?r:a,rows[0]);
@@ -1815,6 +1832,7 @@ document.addEventListener('click',e=>{
     case 'editExp': expectedForm(S.expected.find(z=>z.id===id)); break;
     case 'delExp': del('expected','Deze verwachting wordt verwijderd.'); break;
     case 'addRec': recurringForm(k); break;
+    case 'incOnce': onceForm(b.dataset.p||''); break;
     case 'incAdd': recurringForm('in',null,{person:b.dataset.p||'',cat:'Salaris'}); break;
     case 'incClear': confirmBox('Alle <b>verwachte</b> inkomsten voor de toekomst bij Invoeren worden gewist (jaaroverzicht en losse verwachtingen). Daarna tellen alleen nog de inkomsten op de pagina Inkomen plannen. Werkelijk ontvangen bedragen blijven staan.',()=>{ const c=curYm(); S.incPlan=S.incPlan.filter(p=>p.only? p.from<c : false); S.expected=S.expected.filter(e=>!(e.kind==='in'&&e.ym>=c)); },'Wissen'); break;
     case 'editRec': { const r=S.recurring.find(z=>z.id===id); recurringForm(r.kind,r); break; }
