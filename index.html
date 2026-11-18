@@ -1058,6 +1058,27 @@ function vVrij(){
       <p class="small muted" style="margin-top:8px">Vul bij een deposito via <b>Wijzig</b> de einddatum in. Het verwachte bedrag schat de app uit de huidige waarde en de rente; je kunt het ook zelf invullen. Na de einddatum: verplaats het geld in de app naar je spaar- of betaalrekening (nieuw saldo invoeren) en zet de deposito op nul.</p></div>
   </div>`;
 }
+/* Deposito: eerstvolgende rente-uitkering en verwacht saldo op de einddatum */
+function nextPayout(a){
+  const step={week:0.25,maand:1,kwartaal:3,jaar:12}[a.renteFreq]||12; const t=todayStr();
+  let d=isDate(a.renteDag)?a.renteDag:(endDateOf(a)||null); if(!d) return null;
+  const add=(x,mo)=>{ if(mo<1){ return addDays(x,7); } const dt=new Date(x+'T12:00'), day=dt.getDate(); dt.setDate(1); dt.setMonth(dt.getMonth()+mo); const last=new Date(dt.getFullYear(),dt.getMonth()+1,0).getDate(); dt.setDate(Math.min(day,last)); return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate()); };
+  const sub=(x,mo)=>{ if(mo<1) return addDays(x,-7); const dt=new Date(x+'T12:00'), day=dt.getDate(); dt.setDate(1); dt.setMonth(dt.getMonth()-mo); const last=new Date(dt.getFullYear(),dt.getMonth()+1,0).getDate(); dt.setDate(Math.min(day,last)); return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate()); };
+  let n=0; while(d<=t && n++<600) d=add(d,step); n=0; while(sub(d,step)>t && n++<600) d=sub(d,step);
+  const end=endDateOf(a); if(end && d>end) d=end;
+  return {date:d, prev:sub(d,step), step};
+}
+function depositLine(a,cur){
+  const np=nextPayout(a), mt=maturityOf(a);
+  const lbl={week:'Wekelijkse',maand:'Maandelijkse',kwartaal:'Rente-uitkering per kwartaal',jaar:'Jaarlijkse'}[a.renteFreq]||'Jaarlijkse';
+  const parts=[];
+  if(np){ const days=Math.max(1,daysBetween(np.prev,np.date)); const amt=cur.value*rateAt(a,np.prev)/100*days/365;
+    parts.push(`${a.renteFreq==='kwartaal'?lbl:lbl+' rente-uitkering'} op <b>${dNl(np.date)}</b>: <b>${E(amt)}</b>`); }
+  else parts.push(`Vul bij Bewerken de datum van de rente-uitkering in om de eerstvolgende uitkering te zien`);
+  if(mt && mt.amount!=null) parts.push(`verwacht saldo op <b>${dNl(mt.date)}</b>: <b>${E(mt.amount)}</b>${mt.est?'':' (zelf ingevuld)'}`);
+  else if(np){ const amt=cur.value*rateAt(a,np.prev)/100*Math.max(1,daysBetween(np.prev,np.date))/365; parts.push(`verwacht saldo op <b>${dNl(np.date)}</b>: <b>${E(cur.value+amt)}</b>`); }
+  return `<div class="small muted" style="margin-top:8px">${parts.join(' · ')}</div>`;
+}
 function vRekeningen(){
   const st=monthStatus(curYm());
   const cards=S.accounts.map(a=>{
@@ -1067,7 +1088,7 @@ function vRekeningen(){
     const fc=hasRate(a)?savingsForecast(a):null;
     return `<div class="card"><div class="acc"><div><div class="nm">${esc(a.name)}</div><div class="row small muted" style="gap:6px;margin-top:3px"><span class="badge">${esc(t.label)}</span>${a.besch?'<span class="badge g">direct beschikbaar</span>':'<span class="badge d">vastgezet / niet direct</span>'}${hasRate(a)?`<span>${numIn(rateAt(a,todayStr()))}% rente · ${esc(RFREQ[a.renteFreq]||'')}${a.renteDag?' · '+esc(payoutLabel(a)):''}${a.inleg?' · inleg '+E(a.inleg)+' p/m':''}</span>`:''}</div></div>
       <div><div class="v">${cur?E2(cur.value):'<span class="muted" style="font-size:16px">onbekend</span>'}</div><div class="small muted" style="text-align:right">${cur?'peildatum '+dNl(cur.date):'nog geen meting'}</div></div></div>
-      ${fc?`<div class="small muted" style="margin-top:8px">Verwachte rente komende 12 maanden: <b>${E(fc.int12)}</b> · verwacht saldo over 12 maanden: <b>${E(fc.rows[11].bal)}</b></div>`:''}
+      ${a.type==='deposito'&&hasRate(a)&&cur?depositLine(a,cur):fc?`<div class="small muted" style="margin-top:8px">Verwachte rente komende 12 maanden: <b>${E(fc.int12)}</b> · verwacht saldo over 12 maanden: <b>${E(fc.rows[11].bal)}</b></div>`:''}
       ${a.type==='goud'?goldBlock(a):''}
       <div class="row" style="margin-top:12px"><button class="btn sm" data-a="meas" data-id="${a.id}">Saldo invoeren</button>${t.waarde?`<button class="btn sec sm" data-a="flow" data-id="${a.id}">Aankoop / verkoop</button>`:''}${t.rente?`<button class="btn sec sm" data-a="rate" data-id="${a.id}">Rentewijziging</button><button class="btn sec sm" data-a="intr" data-id="${a.id}">Ontvangen rente</button>`:''}<button class="btn ghost sm" data-a="hist" data-id="${a.id}">${openHist[a.id]?'Verberg':'Toon'} geschiedenis (${ms.length})</button><span class="spacer"></span><button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Bewerken</button><button class="btn ghost sm" data-a="delAcc" data-id="${a.id}">Verwijderen</button></div>
       ${openHist[a.id]?`<div class="tablewrap" style="margin-top:10px"><table><tr><th>Peildatum</th><th class="n">Waarde</th><th></th></tr>${ms.map(m=>`<tr><td>${dNl(m.date)}</td><td class="n">${E2(m.value)}</td><td class="n"><button class="btn ghost sm" data-a="editMeas" data-id="${m.id}">Bewerk</button><button class="btn ghost sm" data-a="delMeas" data-id="${m.id}">✕</button></td></tr>`).join('')}</table>
