@@ -165,7 +165,8 @@ details summary{cursor:pointer;color:var(--b600);font-size:13.5px;margin-top:8px
 .pleg{display:grid;grid-template-columns:12px minmax(0,1fr) auto 44px;gap:8px;align-items:center;padding:3px 6px;border-radius:7px}.pleg:hover{background:var(--b50)}.pleg i{width:10px;height:10px;border-radius:3px;display:inline-block}.pleg b{font-variant-numeric:tabular-nums}.pleg .pname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pleg .muted{text-align:right;font-size:12px}
 tr.ysum td,tr.ysum th{background:var(--b100)!important;border-bottom:2px solid var(--b200)}
 .accgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
-.accgrid .acard{margin:0;padding:12px 14px}.accgrid .acard.wide{grid-column:1/-1}
+.acccol{display:flex;flex-direction:column;gap:12px;min-width:0}.acchead{font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin:2px 2px -4px}
+.accgrid .acard{margin:0;padding:12px 14px}
 .acard .nm{font-size:15px}.acard .v{font-size:18px}
 .acard .row{margin-top:8px!important;gap:4px}.acard .btn.sm{padding:4px 8px;font-size:12.5px}
 .acard .badge{font-size:10.5px;padding:1px 6px}
@@ -769,6 +770,10 @@ function accountForm(a){
     {k:'endDate',label:'Komt vrij op (einddatum)',type:'date',show:o=>!o.besch,help:'Voor een deposito of ander vastgezet geld: de datum waarop het geld vrij opneembaar wordt. Wordt gebruikt in het overzicht "Vrij geld".'},
     {k:'endAmount',label:'Verwacht bedrag bij vrijkomen (€, optioneel)',type:'num',show:o=>!o.besch && o.endDate,help:'Leeg = de app schat het zelf: huidige waarde plus de rente tot de einddatum.'}
   ], onSave:o=>{
+    const curV=isNew?(o.saldo||0):((currentOf(a.id)||{}).value||0);
+    if(o.inleg>0 && (o.inleg>20000 || (curV>0 && o.inleg>=curV)) && window._inlegOk!==o.inleg){ window._inlegOk=o.inleg;
+      return `Klopt de verwachte inleg van ${E(o.inleg)} per maand? Dat is ${curV>0&&o.inleg>=curV?'meer dan het hele saldo':'erg veel'}. Dit veld is voor het bedrag dat je elke maand bijstort, niet voor het saldo. Klik nogmaals op Opslaan als het toch klopt.`; }
+    window._inlegOk=null;
     if(isNew){
       const sal=o.saldo, sd=o.saldoDate||todayStr(); delete o.saldo; delete o.saldoDate;
       const acc=Object.assign({id:uid()},o); S.accounts.push(acc);
@@ -1097,7 +1102,7 @@ function depositLine(a,cur){
 }
 function vRekeningen(){
   const st=monthStatus(curYm());
-  const cards=S.accounts.map(a=>{
+  const cardOf=a=>{
     const t=TYPES[a.type], cur=currentOf(a.id), ms=measOf(a.id).slice().reverse();
     const fl=S.flows.filter(f=>f.acc===a.id).sort((x,y)=>x.date<y.date?1:-1);
     const rts=(a.rates||[]).slice().sort((x,y)=>x.from<y.from?1:-1), ints=S.interest.filter(x=>x.acc===a.id).sort((x,y)=>x.date<y.date?1:-1);
@@ -1112,7 +1117,11 @@ function vRekeningen(){
         ${ints.length?`<h2 style="margin-top:14px;font-size:14px">Ontvangen rente</h2><table>${ints.map(x=>`<tr><td>${dNl(x.date)}</td><td>${esc(x.note||'')}</td><td class="n">${E2(x.amount)}</td><td class="n"><button class="btn ghost sm" data-a="delInt" data-id="${x.id}">✕</button></td></tr>`).join('')}</table>`:''}
         ${fl.length?`<h2 style="margin-top:14px;font-size:14px">Aankopen en verkopen</h2><table>${fl.map(f=>`<tr><td>${dNl(f.date)}</td><td>${esc(f.note||'')}</td><td class="n">${f.amount>0?'+':''}${E2(f.amount)}</td><td class="n"><button class="btn ghost sm" data-a="delFlow" data-id="${f.id}">✕</button></td></tr>`).join('')}</table>`:''}</div>`:''}
     </div>`;
-  }).join('');
+  };
+  const left=S.accounts.filter(a=>a.type!=='deposito'), right=S.accounts.filter(a=>a.type==='deposito');
+  const cards=S.accounts.length?(right.length&&left.length
+    ? `<div class="acccol"><div class="acchead">Rekeningen en bezittingen</div>${left.map(cardOf).join('')}</div><div class="acccol"><div class="acchead">Deposito's</div>${right.map(cardOf).join('')}</div>`
+    : `<div class="acccol">${S.accounts.map(cardOf).join('')}</div><div class="acccol"></div>`):'';
   return `<div class="row"><div><h1>Rekeningen</h1><p class="sub">Totaal bekend: <b>${E(st.total)}</b> · direct beschikbaar: <b>${E(st.besch)}</b></p></div><span class="spacer"></span><button class="btn" data-a="addAcc">+ Rekening</button></div>${demoBanner()}${completeness(st)}
   <p class="small muted" style="margin:4px 0 12px">Het actuele saldo is de meting met de meest recente peildatum.</p>
   ${cards?`<div class="accgrid">${cards}</div>`:'<div class="card muted">Nog geen rekeningen. Voeg je eerste rekening toe.</div>'}`;
