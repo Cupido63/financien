@@ -171,6 +171,7 @@ tr.ysum td,tr.ysum th{background:var(--b100)!important;border-bottom:2px solid v
 .acard .row{margin-top:8px!important;gap:4px}.acard .btn.sm{padding:4px 8px;font-size:12.5px}
 .acard .badge{font-size:10.5px;padding:1px 6px}
 @media (max-width:900px){ .accgrid{grid-template-columns:minmax(0,1fr)} }
+.ktab th,.ktab td{white-space:nowrap}.ktab th.yname{min-width:200px;max-width:none}.ktab td.n{padding:6px 8px;font-size:13px}
 </style>
 </head>
 <body>
@@ -926,6 +927,7 @@ function histRendForm(){
 
 /* ============ Weergaven ============ */
 const ICON = {
+  kort:'<path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6"/><rect x="12" y="7" width="3" height="10"/><rect x="17" y="13" width="3" height="4"/>',
   inkomen:'<path d="M12 2v20"/><path d="M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
   vrij:'<path d="M3 10h18"/><rect x="3" y="5" width="18" height="15" rx="2"/><path d="M8 3v4M16 3v4"/><path d="M9 15l2 2 4-4"/>',
   analyse:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
@@ -939,7 +941,7 @@ const ICON = {
   prognose:'<path d="M3 3v18h18M7 15l4-4 3 3 6-7"/>',
   instellingen:'<path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
 };
-const VIEWS = [['overzicht','Overzicht'],['rekeningen','Rekeningen'],['vrij','Vrij geld'],['inkomen','Inkomen plannen'],['invoer','Invoeren'],['maand','Maand'],['analyse','Analyse'],['vast','Vaste posten'],['investeringen','Investeringen'],['rendement','Rendement'],['prognose','30 jaar'],['instellingen','Instellingen']];
+const VIEWS = [['overzicht','Overzicht'],['rekeningen','Rekeningen'],['kort','Komende 12 mnd'],['vrij','Vrij geld'],['inkomen','Inkomen plannen'],['invoer','Invoeren'],['maand','Maand'],['analyse','Analyse'],['vast','Vaste posten'],['investeringen','Investeringen'],['rendement','Rendement'],['prognose','30 jaar'],['instellingen','Instellingen']];
 let anPieYear=null, anPieCat=null, anCmp=null;
 let view='overzicht', selYm=null, openHist={}, gridYm=null, gridOpen={}, anKind='uit', anPer='last12', anYm=null, anFrom=null, anTo=null, anFocus=null, anSubs=true, invKind='uit', invMode=null, invFwd=true, invView='maand';
 
@@ -1070,6 +1072,94 @@ function onceForm(person){
       {k:'cat',label:'Soort',type:'select',options:S.incCats},
       {k:'person',label:'Van wie?',type:'select',options:[['','Samen'],...S.settings.people.map(p=>[p,p])]}
     ], onSave:o=>{ S.recurring.push({id:uid(),kind:'in',name:o.name,amount:o.amount,cat:o.cat,person:o.person,freq:1,start:o.ym,end:o.ym,day:''}); toast('Eenmalig bedrag opgeslagen'); }});
+}
+
+/* ============ Komende 12 maanden: kortetermijnoverzicht per maand ============ */
+let kortOff=0, kortInc='hist';
+function lastFullMonths(n){ const c=ymI(curYm()); return Array.from({length:n},(_,i)=>iYm(c-n+i)); }
+function histAvg(kind){ const ms=lastFullMonths(12), set=new Set(ms), per={};
+  for(const a of S.actuals){ if(a.kind!==kind||isInv(a)) continue; const ym=a.date.slice(0,7); if(!set.has(ym)) continue; per[ym]=(per[ym]||0)+ +a.amount; }
+  const filled=Object.keys(per); return {avg:filled.length?sum(Object.values(per))/filled.length:0, n:filled.length}; }
+const isOnceRec = r => r.end && r.end===r.start;
+function kortPlan(){
+  const c=ymI(curYm()), today=todayStr(), H=kortOff+12, st=monthStatus(curYm());
+  const hi=histAvg('in'), hu=histAvg('uit');
+  const mats=S.accounts.map(maturityOf).filter(m=>m&&m.amount!=null&&m.date>today);
+  const inlegNB=sum(S.accounts.filter(a=>!a.besch&&+a.inleg>0&&(!a.endDate||a.endDate>today)).map(a=>+a.inleg));
+  let v=st.total, vr=st.besch; const rows=[];
+  for(let k=1;k<=H;k++){
+    const ym=iYm(c+k), inFirst=d=> k===1 ? (d>today && d.slice(0,7)<=ym) : d.slice(0,7)===ym;
+    // reguliere inkomsten
+    let inc=0;
+    if(kortInc==='hist') inc=hi.avg;
+    else { const o=expIncome(ym); for(const subs of Object.values(o)) for(const v2 of Object.values(subs)) inc+=v2;
+      for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && r.start===ym) inc-=+r.amount;
+      for(const e of S.expected) if(e.kind==='in' && e.ym===ym) inc-=+e.amount; }
+    const exp=hu.avg;
+    // incidenteel
+    const incI=[], expI=[], inv=[];
+    for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && (k===1? r.start>=curYm()&&r.start<=ym : r.start===ym)) incI.push({txt:r.name+(r.person?' ('+r.person+')':''),amt:+r.amount});
+    for(const e of S.expected) if(e.ym===ym || (k===1 && e.ym===curYm())) (e.kind==='in'?incI:expI).push({txt:e.note||e.cat,amt:+e.amount});
+    for(const a of S.actuals) if(a.kind==='uit' && !a.grid && a.monthTotal==null && inFirst(a.date)) (isInv(a)?inv:expI).push({txt:a.note||a.cat,amt:+a.amount});
+    for(const a of S.actuals) if(a.kind==='in' && !a.grid && inFirst(a.date)) incI.push({txt:a.note||a.cat,amt:+a.amount});
+    const sI=sum(incI.map(x=>x.amt)), sE=sum(expI.map(x=>x.amt)), sV=sum(inv.map(x=>x.amt));
+    const ret=v*(yp(+ym.slice(0,4)).rend-S.settings.box3)/100/12;
+    const begin=v; v=v+inc-exp+sI-sE-sV+ret;
+    const mat=sum(mats.filter(m=>inFirst(m.date)).map(m=>m.amount));
+    vr=vr+inc-exp+sI-sE-sV-inlegNB+mat;
+    rows.push({ym,begin,inc,exp,incI,expI,inv,sI,sE,sV,ret,end:v,vrij:vr});
+  }
+  return {rows:rows.slice(kortOff,kortOff+12), start:st, hi, hu};
+}
+function flowBars(rows){
+  const W=760,H=240,pl=64,pr=10,pt=12,pb=28,n=rows.length;
+  const ins=rows.map(r=>[r.inc,r.sI]), outs=rows.map(r=>[r.exp,r.sE,r.sV]);
+  const mx=Math.max(1,...ins.map(a=>a[0]+a[1]),...outs.map(a=>a[0]+a[1]+a[2])); const ticks=niceTicks(0,mx), hi=ticks[ticks.length-1];
+  const y=v=>pt+(H-pt-pb)*(1-v/hi), band=(W-pl-pr)/n, bw=Math.min(18,band*0.32); let g='';
+  for(const t of ticks) g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(t)}" y2="${y(t)}" stroke="${t===0?'#b8c7dc':'#e6edf6'}"/><text x="${pl-8}" y="${y(t)+4}" text-anchor="end" font-size="11" fill="#5a6b85">${esc(eurC.format(t))}</text>`;
+  const IC=['#1baf7a','#7fd6b0'], OC=['#d9773a','#f2a541','#b42318'], IN=['Inkomsten','Incidentele inkomsten'], ON=['Uitgaven (gemiddeld)','Incidentele uitgaven','Investeringen'];
+  rows.forEach((r,i)=>{ const cx=pl+band*(i+.5); let acc=0;
+    ins[i].forEach((v,j)=>{ if(v<=0) return; g+=`<rect x="${cx-bw-1}" y="${y(acc+v)}" width="${bw}" height="${y(acc)-y(acc+v)}" fill="${IC[j]}"><title>${esc(mLong(r.ym))} · ${IN[j]}: ${esc(E(v))}</title></rect>`; acc+=v; });
+    acc=0; outs[i].forEach((v,j)=>{ if(v<=0) return; g+=`<rect x="${cx+1}" y="${y(acc+v)}" width="${bw}" height="${y(acc)-y(acc+v)}" fill="${OC[j]}"><title>${esc(mLong(r.ym))} · ${ON[j]}: ${esc(E(v))}</title></rect>`; acc+=v; });
+    g+=`<text x="${cx}" y="${H-9}" text-anchor="middle" font-size="11" fill="#5a6b85">${esc(mName(r.ym))}</text>`; });
+  const leg=[...IN.map((t,j)=>`<span><i style="background:${IC[j]}"></i>${t}</span>`),...ON.map((t,j)=>`<span><i style="background:${OC[j]}"></i>${t}</span>`)].join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img">${g}</svg></div><div class="legend">${leg}</div>`;
+}
+function vKort(){
+  const pl=kortPlan(), rows=pl.rows, first=rows[0], last=rows[rows.length-1];
+  const tip=list=>esc(list.map(x=>x.txt+': '+E(x.amt)).join('\n'));
+  const cell=(v,sign,list)=>`<td class="n ${v&&sign<0?'neg':v&&sign>0?'pos':''}" ${list&&list.length?`title="${tip(list)}" style="cursor:help;text-decoration:underline dotted"`:''}>${v?(sign<0?'−':sign>0?'+':'')+E(Math.abs(v)):''}</td>`;
+  const tr=(label,fn,cls='')=>`<tr class="${cls}"><th class="yname">${label}</th>${rows.map(fn).join('')}</tr>`;
+  const lineCh=lineChart({labels:rows.map(r=>mName(r.ym)),series:[{name:'Verwacht vermogen (eind van de maand)',values:rows.map(r=>r.end),color:'#1d5fbf'},{name:'Waarvan vrij opneembaar',values:rows.map(r=>r.vrij),color:'#93b8ea'}],h:240});
+  const evList=rows.flatMap(r=>[...r.incI.map(x=>({ym:r.ym,t:'in',...x})),...r.expI.map(x=>({ym:r.ym,t:'uit',...x})),...r.inv.map(x=>({ym:r.ym,t:'inv',...x}))]);
+  return `<div class="row"><div><h1>Komende 12 maanden</h1><p class="sub">Je verwachte vermogen per maand, met inkomsten, uitgaven, incidentele bedragen en investeringen. Zonder afschrijving: investeringen tellen in de maand van betaling.</p></div></div>${demoBanner()}
+  <div class="card"><div class="row"><button class="btn sec sm" data-a="kortOff" data-d="-12" ${kortOff<=0?'disabled':''} title="12 maanden terug">«</button><button class="btn sec sm" data-a="kortOff" data-d="-1" ${kortOff<=0?'disabled':''} title="Maand terug">‹</button>
+    <b style="font-size:16px">${mLong(first.ym)} – ${mLong(last.ym)}</b>
+    <button class="btn sec sm" data-a="kortOff" data-d="1" title="Maand verder">›</button><button class="btn sec sm" data-a="kortOff" data-d="12" title="12 maanden verder">»</button>
+    <span class="spacer"></span><span class="small" style="font-weight:600;color:var(--b800)">Inkomsten:</span>
+    <div class="toggle"><button data-a="kortInc" data-v="hist" class="${kortInc==='hist'?'on':''}">Gemiddelde laatste 12 mnd</button><button data-a="kortInc" data-v="plan" class="${kortInc==='plan'?'on':''}">Volgens Inkomen plannen</button></div></div></div>
+  <div class="grid g4">
+    <div class="tile"><div class="lbl">Vermogen nu</div><div class="val">${E(pl.start.total)}</div><div class="note">vrij opneembaar ${E(pl.start.besch)}</div></div>
+    <div class="tile alt"><div class="lbl">Verwacht eind ${mName(last.ym)}</div><div class="val ${last.end<pl.start.total?'neg':''}">${E(last.end)}</div><div class="note">${last.end>=first.begin?'+':'−'}${E(Math.abs(last.end-first.begin))} in deze 12 maanden</div></div>
+    <div class="tile alt2"><div class="lbl">Inkomsten per maand</div><div class="val">${E(first.inc)}</div><div class="note">${kortInc==='hist'?`gemiddelde over ${pl.hi.n} maand${pl.hi.n===1?'':'en'}`:'volgens Inkomen plannen'}</div></div>
+    <div class="tile alt3"><div class="lbl">Uitgaven per maand</div><div class="val">${E(pl.hu.avg)}</div><div class="note">gemiddelde over ${pl.hu.n} maand${pl.hu.n===1?'':'en'}, zonder investeringen</div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><h2>Verwacht vermogen</h2>${lineCh}</div>
+  <div class="card"><h2>Erin en eruit per maand</h2><p class="small muted" style="margin-top:-4px">Per maand links (groen) wat erin komt, rechts (oranje/rood) wat eruit gaat. Beweeg over een blok voor het bedrag.</p>${flowBars(rows)}</div>
+  <div class="card"><h2>Per maand</h2><p class="small muted">Beweeg over een onderstreept bedrag om te zien waar het uit bestaat.</p>
+    <div class="ywrap"><table class="ytab ktab"><thead><tr><th class="yname"></th>${rows.map(r=>`<th>${MN[+r.ym.slice(5)-1]} ${r.ym.slice(2,4)}</th>`).join('')}</tr></thead><tbody>
+    ${tr('Vermogen begin',r=>`<td class="n">${E(r.begin)}</td>`)}
+    ${tr('+ Inkomsten',r=>cell(r.inc,1))}
+    ${tr('+ Incidentele inkomsten',r=>cell(r.sI,1,r.incI))}
+    ${tr('− Uitgaven (gemiddeld)',r=>cell(r.exp,-1))}
+    ${tr('− Incidentele uitgaven',r=>cell(r.sE,-1,r.expI))}
+    ${tr('− Investeringen',r=>cell(r.sV,-1,r.inv))}
+    ${tr('+ Rendement / rente',r=>cell(r.ret,1))}
+    ${tr('<b>Vermogen eind</b>',r=>`<td class="n"><b class="${r.end<0?'neg':''}">${E(r.end)}</b></td>`,'gtot')}
+    ${tr('Waarvan vrij opneembaar',r=>`<td class="n ${r.vrij!=null&&r.vrij<0?'neg':''}">${r.vrij!=null?E(r.vrij):''}</td>`)}
+    </tbody></table></div></div>
+  <div class="card"><h2>Incidentele bedragen en investeringen in deze periode</h2>${evList.length?`<div class="tablewrap"><table><tr><th>Maand</th><th>Wat</th><th class="n">Bedrag</th></tr>${evList.map(e=>`<tr><td>${mLong(e.ym)}</td><td>${e.t==='inv'?'<span class="badge">investering</span> ':e.t==='in'?'<span class="badge g">inkomst</span> ':'<span class="badge w">uitgave</span> '}${esc(e.txt)}</td><td class="n ${e.t==='in'?'pos':'neg'}">${e.t==='in'?'+':'−'}${E(e.amt)}</td></tr>`).join('')}</table></div>`:'<p class="muted">Geen incidentele bedragen of investeringen in deze periode.</p>'}
+    <p class="small muted" style="margin-top:8px">Incidentele inkomsten: eenmalige bedragen bij Inkomen plannen en verwachtingen bij Invoeren. Incidentele uitgaven: verwachtingen en losse uitgaven met een datum in de toekomst. Investeringen: aankopen boven het grensbedrag, in de maand van betaling. Rendement: ${numIn(S.settings.rend)}% per jaar over het hele vermogen (instelbaar bij Instellingen en per jaar bij 30 jaar).</p></div>`;
 }
 function vInkomen(){
   const people=[...S.settings.people,'Samen'];
@@ -1764,7 +1854,7 @@ function vInstellingen(){
 function render(){
   view=(location.hash.slice(1)||'overzicht'); if(!VIEWS.some(v=>v[0]===view)) view='overzicht';
   renderNav();
-  const fn={inkomen:vInkomen,vrij:vVrij,analyse:vAnalyse,invoer:vInvoer,overzicht:vOverzicht,rekeningen:vRekeningen,maand:vMaand,vast:vVast,investeringen:vInvesteringen,rendement:vRendement,prognose:vPrognose,instellingen:vInstellingen}[view];
+  const fn={kort:vKort,inkomen:vInkomen,vrij:vVrij,analyse:vAnalyse,invoer:vInvoer,overzicht:vOverzicht,rekeningen:vRekeningen,maand:vMaand,vast:vVast,investeringen:vInvesteringen,rendement:vRendement,prognose:vPrognose,instellingen:vInstellingen}[view];
   $('#main').innerHTML=fn();
 }
 
@@ -1832,6 +1922,8 @@ document.addEventListener('click',e=>{
     case 'editExp': expectedForm(S.expected.find(z=>z.id===id)); break;
     case 'delExp': del('expected','Deze verwachting wordt verwijderd.'); break;
     case 'addRec': recurringForm(k); break;
+    case 'kortOff': kortOff=Math.max(0,kortOff+(+b.dataset.d)); keepScroll(); break;
+    case 'kortInc': kortInc=b.dataset.v; keepScroll(); break;
     case 'incOnce': onceForm(b.dataset.p||''); break;
     case 'incAdd': recurringForm('in',null,{person:b.dataset.p||'',cat:'Salaris'}); break;
     case 'incClear': confirmBox('Alle <b>verwachte</b> inkomsten voor de toekomst bij Invoeren worden gewist (jaaroverzicht en losse verwachtingen). Daarna tellen alleen nog de inkomsten op de pagina Inkomen plannen. Werkelijk ontvangen bedragen blijven staan.',()=>{ const c=curYm(); S.incPlan=S.incPlan.filter(p=>p.only? p.from<c : false); S.expected=S.expected.filter(e=>!(e.kind==='in'&&e.ym>=c)); },'Wissen'); break;
