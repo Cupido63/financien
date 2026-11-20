@@ -1158,7 +1158,7 @@ function expReturnSim(months,scen='mid'){
         if(x.end && ym>x.end.slice(0,7)){ const rr=reinvRate(a); if(!rr){ x.done=true; continue; }
           // herbelegd: jaarlijkse rente op de verjaardag van de einddatum, naar de betaalrekening
           if((ymI(ym)-ymI(x.end.slice(0,7)))%12===0){ amt=x.v*rr/100; reinv=true; } else { continue; } }
-        if(x.pm.set.has(ym)){ if(x.pm.end){ const anc=interestAnchor(a,x.cur.date); amt=x.v*rateAt(a,anc)/100*Math.max(0,daysBetween(anc,x.end))/365; } else amt=x.v*rateAt(a,ym+'-01')/100*x.pm.step/12; } }
+        else if(x.pm.set.has(ym)){ if(x.pm.end){ const anc=interestAnchor(a,x.cur.date); amt=x.v*rateAt(a,anc)/100*Math.max(0,daysBetween(anc,x.end))/365; } else amt=x.v*rateAt(a,ym+'-01')/100*x.pm.step/12; } }
       else if(hasRate(a)){ amt=x.v*rateAt(a,ym+'-01')/100/12; }
       if(amt){ if(a.type!=='deposito') x.v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name+(reinv?' (herbelegd)':''),amt,id:a.id,reinv,toVrij:a.type==='deposito'||!!a.besch}); }
     }
@@ -1820,7 +1820,7 @@ function expRendCard(){
     return ['Waarom is het saldo lager?','Aankopen en uitgaven gaan af van je vrij opneembare rekeningen, naar verhouding van het saldo.',
       ...(inY.length?['In '+y+':',...inY.map(line)]:[]), ...(before.length?['Eerder:',...before.map(line)]:[])].join('\n'); };
   sim.forEach((m,k)=>{ const y=+iYm(c+k+1).slice(0,4), yi=yrs.indexOf(y); if(yi<0) return; tot[yi]+=m.total;
-    for(const x of m.byAcc){ (per[x.id] ||= yrs.map(()=>0))[yi]+=x.amt; if(rendSure(accById(x.id))) sure[yi]+=x.amt; else exp[yi]+=x.amt; } });
+    for(const x of m.byAcc){ (per[x.id] ||= yrs.map(()=>0))[yi]+=x.amt; if(rendSure(accById(x.id))&&!x.reinv) sure[yi]+=x.amt; else exp[yi]+=x.amt; } });
   // saldo op 1 januari per rekening: dit jaar = werkelijk (31 dec vorig jaar), later = uit de berekening
   const accs=S.accounts.filter(a=>currentOf(a.id));
   const startBal=(a,y)=>{ if(y===cy){ const m=valueAt(a.id,(cy-1)+'-12-31'); if(m) return m.value; if(a.start && a.start>=cy+'-01-01') return 0; const f=measOf(a.id)[0]; return f&&f.date.slice(0,4)<=String(cy)?(f.date>=cy+'-01-01'&&a.start?0:f.value):0; }
