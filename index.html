@@ -1119,6 +1119,30 @@ function futureOutflowItems(ym,k){
           ...S.expected.filter(e=>e.kind==='uit'&&(e.ym===ym||(k===1&&e.ym===curYm()))).map(e=>({txt:e.note||e.cat,amt:+e.amount,inv:false,ym:e.ym}))];
 }
 function futureOutflow(ym,k){ return sum(futureOutflowItems(ym,k).map(x=>x.amt)); }
+/* Correcties op het rendement:
+   - aankopen en incidentele uitgaven: dat geld is weg, je mist de rente die het op een deposito had opgeleverd (gemiddelde depositorente);
+   - maandelijks overschot (inkomsten − uitgaven): dat staat op je spaarrekening en levert spaarrente op (gemiddelde spaarrente). */
+function regularFlow(ym){
+  let inc=0;
+  if(kortInc==='hist') inc=histAvg('in').avg;
+  else { const o=expIncome(ym); for(const subs of Object.values(o)) for(const v of Object.values(subs)) inc+=v;
+    for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && r.start===ym) inc-=+r.amount;
+    for(const e of S.expected) if(e.kind==='in' && e.ym===ym) inc-=+e.amount; }
+  return {inc, exp:histAvg('uit').avg};
+}
+function avgRate(list,ym){ const w=sum(list.map(a=>(currentOf(a.id)||{}).value||0)); return w?sum(list.map(a=>((currentOf(a.id)||{}).value||0)*rateAt(a,ym+'-01')))/w:0; }
+function cashInterest(months){
+  const c=ymI(curYm());
+  const sav=S.accounts.filter(a=>a.besch&&hasRate(a)&&a.type!=='deposito'&&currentOf(a.id));
+  const deps=S.accounts.filter(a=>a.type==='deposito'&&hasRate(a)&&currentOf(a.id));
+  let cumOut=0, cumSur=0; const out=[];
+  for(let k=1;k<=months;k++){ const ym=iYm(c+k), items=futureOutflowItems(ym,k), of=sum(items.map(x=>x.amt));
+    const act=deps.filter(a=>!endDateOf(a)||endDateOf(a).slice(0,7)>=ym), rDep=avgRate(act.length?act:deps,ym)||avgRate(sav,ym), rSav=avgRate(sav,ym);
+    const f=regularFlow(ym), sur=f.inc-f.exp;
+    const lost=cumOut*rDep/100/12, gain=cumSur*rSav/100/12;
+    cumOut+=of; cumSur+=sur; out.push({ym,out:of,items,lost,gain,sur,rDep,rSav}); }
+  return out;
+}
 function expReturnSim(months){
   const c=ymI(curYm()), from=iYm(c+1), to=iYm(c+months), out=Array.from({length:months},()=>({total:0,byAcc:[],bal:{},ded:{}}));
   const st=S.accounts.map(a=>{ const cur=currentOf(a.id); if(!cur) return null;
@@ -1132,9 +1156,7 @@ function expReturnSim(months){
       if(amt){ if(a.type!=='deposito') x.v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name,amt,id:a.id,toVrij:a.type==='deposito'||!!a.besch}); }
     }
     // aankopen en incidentele uitgaven gaan af van de vrij opneembare rekeningen, naar verhouding van hun saldo
-    const items=futureOutflowItems(ym,k), of=sum(items.map(x=>x.amt));
-    if(of>0){ const pool=st.filter(x=>x.a.besch&&!x.done&&x.v>0), tot=sum(pool.map(x=>x.v)); if(tot>0){ const f=Math.min(1,of/tot);
-      for(const x of pool){ const d=x.v*f; x.v-=d; out[k-1].ded[x.a.id]=items.map(it=>({...it,share:d*it.amt/of})); } } }
+
   }
   return out;
 }
@@ -1143,7 +1165,7 @@ function kortPlan(off=kortOff,count=12){
   const hi=histAvg('in'), hu=histAvg('uit');
   const mats=S.accounts.map(maturityOf).filter(m=>m&&m.amount!=null&&m.date>today);
   const inlegNB=sum(S.accounts.filter(a=>!a.besch&&+a.inleg>0&&(!a.endDate||a.endDate>today)).map(a=>+a.inleg));
-  const sim=expReturnSim(Math.max(1,H));
+  const sim=expReturnSim(Math.max(1,H)), lost=cashInterest(Math.max(1,H));
   let v=st.total, vr=st.besch; const rows=[];
   for(let k=1;k<=H;k++){
     const ym=iYm(c+k), inFirst=d=> k===1 ? (d>today && d.slice(0,7)<=ym) : d.slice(0,7)===ym;
@@ -1161,7 +1183,7 @@ function kortPlan(off=kortOff,count=12){
     for(const a of S.actuals) if(a.kind==='uit' && !a.grid && a.monthTotal==null && inFirst(a.date)) (isInv(a)?inv:expI).push({txt:a.note||a.cat,amt:+a.amount});
     for(const a of S.actuals) if(a.kind==='in' && !a.grid && inFirst(a.date)) incI.push({txt:a.note||a.cat,amt:+a.amount});
     const sI=sum(incI.map(x=>x.amt)), sE=sum(expI.map(x=>x.amt)), sV=sum(inv.map(x=>x.amt));
-    const ret=sim[k-1]?sim[k-1].total:0, retL=sim[k-1]?sim[k-1].byAcc:[];
+    const li=lost[k-1]||{lost:0,gain:0}; const ret=(sim[k-1]?sim[k-1].total:0)-li.lost+li.gain, retL=[...(sim[k-1]?sim[k-1].byAcc:[]),...(Math.abs(li.gain)>=0.5?[{txt:'Rente over gespaard overschot',amt:li.gain,toVrij:true}]:[]),...(li.lost>=0.5?[{txt:'Correctie: gemiste rente door aankopen/uitgaven',amt:-li.lost,toVrij:true}]:[])];
     const begin=v; v=v+inc-exp+sI-sE-sV+ret;
     const mat=sum(mats.filter(m=>inFirst(m.date)).map(m=>m.amount));
     vr=vr+inc-exp+sI-sE-sV-inlegNB+mat+sum((retL||[]).filter(x=>x.toVrij).map(x=>x.amt));
@@ -1797,7 +1819,10 @@ function expRendCard(){
     const k=ymI(y+'-01')-c-1; const r=sim[k]; if(r && r.bal[a.id]!=null) return r.bal[a.id];
     if(a.type==='deposito'&&endDateOf(a)&&endDateOf(a).slice(0,4)<String(y)){ const mt=maturityOf(a); return mt&&mt.amount!=null?mt.amount:(currentOf(a.id)||{}).value||0; }
     return (currentOf(a.id)||{}).value||0; };
-  const kp=kortPlan(0,Math.max(1,months)).rows;
+  const kp=kortPlan(0,Math.max(1,months)).rows, li=cashInterest(Math.max(1,months));
+  const outY=yrs.map(()=>0), lostY=yrs.map(()=>0), surY=yrs.map(()=>0), gainY=yrs.map(()=>0), itemsY=yrs.map(()=>[]);
+  li.forEach(m=>{ const yi=yrs.indexOf(+m.ym.slice(0,4)); if(yi<0) return; outY[yi]+=m.out; lostY[yi]+=m.lost; surY[yi]+=m.sur; gainY[yi]+=m.gain; itemsY[yi].push(...m.items); });
+  const rD=li.length?li[0].rDep:0, rS=li.length?li[0].rSav:0;
   const projVerm=y=>{ const idx=ymI((y-1)+'-12')-c-1; if(idx<0) return monthStatus(curYm()).total; return kp[idx]?kp[idx].end:null; };
   const vermStart=yrs.map(y=>y===cy?sum(accs.map(a=>startBal(a,y))):projVerm(y));
   // basis voor de percentages: rekeningen die in dat jaar rente/rendement kunnen opleveren
@@ -1812,12 +1837,17 @@ function expRendCard(){
     return hasRate(a)?`${E(cur.value)} · ${numIn(rateAt(a,todayStr()))}% rente (variabel)`:`${E(cur.value)} · geen rente`; };
   const badge=a=>rendSure(a)?'<span class="badge g">zeker</span>':(hasRate(a)||TYPES[a.type].waarde)?'<span class="badge">verwacht</span>':'';
   const ordered=[...accs.filter(rendSure),...accs.filter(a=>!rendSure(a))];
-  const rows=ordered.map(a=>`<tr><td>${esc(a.name)} ${badge(a)}<div class="small muted">${accInfo(a)}</div></td>${yrs.map((y,i)=>{ const v=per[a.id]?per[a.id][i]:0, ab=avgBal(a.id,i), nM=balN[a.id]?balN[a.id][i]:12, pb=a.type==='deposito'?ab:ab*nM/12; return `<td class="n">${v>=1?E(v)+pc(v,pb):'<span class="muted">–</span>'}${ab>=1&&(hasRate(a)||TYPES[a.type].waarde)?(()=>{ const tp=dedTip(a.id,y); return `<div class="small muted" title="${esc(tp||('Gemiddeld verwacht saldo in '+y+(y===cy?' (rest van het jaar)':'')))}" ${tp?'style="cursor:help;text-decoration:underline dotted;color:var(--warn)"':''}>gem. ${E(ab)}${tp?' ⓘ':''}</div>`; })():''}</td>`; }).join('')}<td class="n">${TYPES[a.type].waarde||a.type==='deposito'||hasRate(a)?`<button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Instellen</button>`:''}</td></tr>`).join('');
-  return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Per rekening: bedrag per jaar, het percentage t.o.v. het gemiddelde saldo in dat jaar, en het gemiddelde verwachte saldo (gem.). Totalen: t.o.v. het vermogen op 1 januari. <span class="badge g">zeker</span> vaste rente · <span class="badge">verwacht</span> schatting.</p>
+  const rows=ordered.map(a=>`<tr><td>${esc(a.name)} ${badge(a)}<div class="small muted">${accInfo(a)}</div></td>${yrs.map((y,i)=>{ const v=per[a.id]?per[a.id][i]:0, ab=avgBal(a.id,i), nM=balN[a.id]?balN[a.id][i]:12, pb=a.type==='deposito'?ab:ab*nM/12; return `<td class="n">${v>=1?E(v)+pc(v,pb):'<span class="muted">–</span>'}${ab>=1&&(hasRate(a)||TYPES[a.type].waarde)?`<div class="small muted" title="Gemiddeld verwacht saldo in ${y}${y===cy?' (rest van het jaar)':''}, zonder aankopen">gem. ${E(ab)}</div>`:''}</td>`; }).join('')}<td class="n">${TYPES[a.type].waarde||a.type==='deposito'||hasRate(a)?`<button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Instellen</button>`:''}</td></tr>`).join('');
+  return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Per rekening: rente/rendement per jaar, % t.o.v. het gemiddelde saldo, en het gemiddelde saldo (gem.), alsof er niets wordt uitgegeven. Onderaan de correcties voor aankopen en voor je maandelijkse overschot. Totalen: % t.o.v. het vermogen op 1 januari. <span class="badge g">zeker</span> vaste rente · <span class="badge">verwacht</span> schatting.</p>
     <div class="tablewrap"><table><tr><th>Rekening</th>${yrs.map(y=>`<th class="n">${y}${y===cy?' (rest)':''}</th>`).join('')}<th></th></tr>${rows}
     <tr><td><span class="badge g">zeker</span> deposito's<div class="small muted">% t.o.v. het vermogen op 1 januari</div></td>${sure.map((v,i)=>`<td class="n">${v>=1?E(v)+pc(v,vermStart[i]):'–'}</td>`).join('')}<td></td></tr>
     <tr><td><span class="badge">verwacht</span> overige<div class="small muted">% t.o.v. het vermogen op 1 januari</div></td>${exp.map((v,i)=>`<td class="n">${v>=1?E(v)+pc(v,vermStart[i]):'–'}</td>`).join('')}<td></td></tr>
     <tr class="tot"><td>Totaal<div class="small muted" style="font-weight:400">% t.o.v. het vermogen op 1 januari</div></td>${tot.map((v,i)=>`<td class="n">${E(v)}<div class="small muted" style="font-weight:400">${vermStart[i]?P(v/vermStart[i]):''}</div></td>`).join('')}<td></td></tr>
+    <tr><td>Investeringen en incidentele uitgaven<div class="small muted">bedrag in dat jaar</div></td>${outY.map((v,i)=>`<td class="n" ${itemsY[i].length?`title="${esc(itemsY[i].map(x=>x.txt+(x.inv?' (investering)':'')+', '+mLong(x.ym)+': '+E(x.amt)).join('\n'))}" style="cursor:help;text-decoration:underline dotted"`:''}>${v>=1?E(v):'–'}</td>`).join('')}<td></td></tr>
+    <tr><td>Correctie: gemiste rente<div class="small muted">dit geld had op een deposito kunnen staan (${numIn(Math.round(rD*100)/100)}% gemiddeld)</div></td>${lostY.map((v,i)=>`<td class="n neg">${v>=1?'−'+E(v)+`<div class="small muted">−${P(vermStart[i]?v/vermStart[i]:0)}</div>`:'–'}</td>`).join('')}<td></td></tr>
+    <tr><td>Overschot (inkomsten − uitgaven)<div class="small muted">bedrag in dat jaar, naar je spaarrekening</div></td>${surY.map(v=>`<td class="n ${v<0?'neg':''}">${Math.abs(v)>=1?(v<0?'−':'')+E(Math.abs(v)):'–'}</td>`).join('')}<td></td></tr>
+    <tr><td>Rente over gespaard overschot<div class="small muted">spaarrente (${numIn(Math.round(rS*100)/100)}% gemiddeld)</div></td>${gainY.map((v,i)=>`<td class="n ${v<0?'neg':'pos'}">${Math.abs(v)>=1?(v<0?'−':'+')+E(Math.abs(v))+`<div class="small muted">${v<0?'−':'+'}${P(vermStart[i]?Math.abs(v)/vermStart[i]:0)}</div>`:'–'}</td>`).join('')}<td></td></tr>
+    <tr class="tot"><td>Totaal na correctie<div class="small muted" style="font-weight:400">% t.o.v. het vermogen op 1 januari</div></td>${tot.map((v,i)=>{ const n=v-lostY[i]+gainY[i]; return `<td class="n">${E(n)}<div class="small muted" style="font-weight:400">${vermStart[i]?P(n/vermStart[i]):''}</div></td>`; }).join('')}<td></td></tr>
     <tr><td class="small muted">Vermogen op 1 januari<div class="small muted">later: uit Komende maanden</div></td>${vermStart.map((v,i)=>`<td class="n small muted">${v!=null?E(v):'–'}${i===0?' (werkelijk)':' (verwacht)'}</td>`).join('')}<td></td></tr></table></div>
 </div>`;
 }
@@ -2033,7 +2063,7 @@ const HELP={
   <ul><li><span class="badge g">zeker</span> <b>Deposito's:</b> vaste rente op de uitkeringsdatum of de einddatum; de rente gaat naar je betaalrekening (geen rente op rente). <i>Voorbeeld:</i> €6.000 × 2,5% over 2 jaar = €300, alleen in het jaar van de einddatum.</li>
   <li><span class="badge">verwacht</span> <b>Spaarrekeningen:</b> het ingestelde (variabele) rentepercentage, met rente op rente.</li>
   <li><span class="badge">verwacht</span> <b>Goud, aandelen, crypto:</b> het verwachte rendement dat je per rekening instelt (Bewerken).</li></ul>
-  <p><b>Percentage per rekening:</b> rendement in een jaar ÷ <b>gemiddeld saldo</b> in dat jaar (gem.). Zo zie je de echte rente, ook als er halverwege het jaar geld afgaat voor een aankoop.<br><b>Percentage bij de totalen:</b> ÷ het vermogen op 1 januari. Voor dit jaar het werkelijke vermogen per 31 december, voor latere jaren het verwachte vermogen uit Komende maanden (inclusief inkomsten, uitgaven en aankopen).</p><p><b>Aankopen</b> en incidentele uitgaven gaan in de berekening af van je vrij opneembare rekeningen (naar verhouding van het saldo); daarna is er minder rente.</p>
+  <p><b>Percentage per rekening:</b> rendement in een jaar ÷ <b>gemiddeld saldo</b> in dat jaar (gem.). Zo zie je de echte rente, ook als er halverwege het jaar geld afgaat voor een aankoop.<br><b>Percentage bij de totalen:</b> ÷ het vermogen op 1 januari. Voor dit jaar het werkelijke vermogen per 31 december, voor latere jaren het verwachte vermogen uit Komende maanden (inclusief inkomsten, uitgaven en aankopen).</p><p><b>Correcties onderaan:</b> per rekening rekent de app alsof het saldo gelijk blijft. Onderaan twee correcties:</p><ul><li><b>Gemiste rente door aankopen:</b> het uitgegeven bedrag × de gemiddelde rente van je deposito's, vanaf de maand na de aankoop. <i>Voorbeeld:</i> auto van €35.000 in juni tegen 2,8% → dat jaar ≈ €490 minder, daarna ≈ €980 per jaar.</li><li><b>Rente over gespaard overschot:</b> wat je per maand overhoudt (inkomsten − uitgaven) gaat naar je spaarrekening en levert spaarrente op. <i>Voorbeeld:</i> €1.500 per maand overschot tegen 2% → na een jaar staat er €18.000 extra, dat jaar ≈ €165 rente, het jaar erna ≈ €525.</li></ul><p><b>Totaal na correctie</b> = totaal − gemiste rente + rente over overschot.</p>
   <p><b>Rendement tot nu:</b> bij rekeningen met rente telt eerst de rente die je echt hebt ontvangen; anders een schatting op basis van saldi en rente. Bij goud en beleggingen: waardestijging min bijgestorte bedragen.</p>`],
  prognose:['30 jaar',`<p>Een berekening van je vermogen over 30 jaar. Geen garantie en geen beleggingsadvies.</p>
   <p><b>Per jaar:</b> vermogen begin + rendement + inkomsten − uitgaven = vermogen eind.</p>
