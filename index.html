@@ -774,6 +774,7 @@ function accountForm(a){
     {k:'besch',label:'Direct beschikbaar (telt mee als vrij besteedbaar geld)',type:'cb'},
     {k:'start',label:'Geopend op (optioneel)',type:'date',help:'Maanden vóór deze datum tellen niet als "onbekend".'},
     {k:'endDate',label:'Komt vrij op (einddatum)',type:'date',show:o=>!o.besch,help:'Voor een deposito of ander vastgezet geld: de datum waarop het geld vrij opneembaar wordt. Wordt gebruikt in het overzicht "Vrij geld".'},
+    {k:'reinvest',label:'Na afloop herbeleggen tegen (%)',type:'num',ph:'leeg = algemene instelling',show:o=>o.type==='deposito',help:'Alleen voor het verwachte rendement na de einddatum. Leeg = de instelling bij Instellingen (standaard dezelfde rente). 0 = niet herbeleggen.'},
     {k:'endAmount',label:'Verwacht bedrag bij vrijkomen (€, optioneel)',type:'num',show:o=>!o.besch && o.endDate,help:'Leeg = de app schat het zelf: huidige waarde plus de rente tot de einddatum.'}
   ], onSave:o=>{
     const curV=isNew?(o.saldo||0):((currentOf(a.id)||{}).value||0);
@@ -1144,17 +1145,22 @@ function cashInterest(months){
     cumOut+=of; cumSur+=sur; out.push({ym,out:of,items,lost,gain,sur,rDep,rSav}); }
   return out;
 }
-function expReturnSim(months){
+const reinvRate = a => { if(a.reinvest!=null && a.reinvest!=='' && !isNaN(a.reinvest)) return +a.reinvest; if(S.settings.reinvestRate!=null) return +S.settings.reinvestRate; return rateAt(a,endDateOf(a)||todayStr()); };
+function expReturnSim(months,scen='mid'){
   const c=ymI(curYm()), from=iYm(c+1), to=iYm(c+months), out=Array.from({length:months},()=>({total:0,byAcc:[],bal:{},ded:{}}));
   const st=S.accounts.map(a=>{ const cur=currentOf(a.id); if(!cur) return null;
     return {a,cur,v:cur.value,t:TYPES[a.type],end:endDateOf(a),pm:a.type==='deposito'?payoutMonths(a,from,to):null,done:false}; }).filter(Boolean);
   for(let k=1;k<=months;k++){ const ym=iYm(c+k);
     for(const x of st){ if(x.done) continue; const a=x.a; let amt=0; out[k-1].bal[a.id]=x.v;
-      if(x.t.waarde){ amt=x.v*((+a.expRend||0)/100)/12; }
-      else if(a.type==='deposito' && hasRate(a)){ if(x.end && ym>x.end.slice(0,7)){ x.done=true; continue; }
+      let reinv=false;
+      if(x.t.waarde){ const r=scen==='low'?(+S.settings.scenLow||0):scen==='high'?(+a.expRend||0)+(+(S.settings.scenHigh??3)):(+a.expRend||0); amt=x.v*(r/100)/12; }
+      else if(a.type==='deposito' && hasRate(a)){
+        if(x.end && ym>x.end.slice(0,7)){ const rr=reinvRate(a); if(!rr){ x.done=true; continue; }
+          // herbelegd: jaarlijkse rente op de verjaardag van de einddatum, naar de betaalrekening
+          if((ymI(ym)-ymI(x.end.slice(0,7)))%12===0){ amt=x.v*rr/100; reinv=true; } else { continue; } }
         if(x.pm.set.has(ym)){ if(x.pm.end){ const anc=interestAnchor(a,x.cur.date); amt=x.v*rateAt(a,anc)/100*Math.max(0,daysBetween(anc,x.end))/365; } else amt=x.v*rateAt(a,ym+'-01')/100*x.pm.step/12; } }
       else if(hasRate(a)){ amt=x.v*rateAt(a,ym+'-01')/100/12; }
-      if(amt){ if(a.type!=='deposito') x.v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name,amt,id:a.id,toVrij:a.type==='deposito'||!!a.besch}); }
+      if(amt){ if(a.type!=='deposito') x.v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name+(reinv?' (herbelegd)':''),amt,id:a.id,reinv,toVrij:a.type==='deposito'||!!a.besch}); }
     }
     // aankopen en incidentele uitgaven gaan af van de vrij opneembare rekeningen, naar verhouding van hun saldo
 
@@ -1854,6 +1860,17 @@ function expRendCard(){
       return A(v>=1?'<b>'+E(v)+'</b>':'<span class="muted">–</span>')+X(ab>=1&&(hasRate(a)||TYPES[a.type].waarde)?`<span title="Gemiddeld verwacht saldo in ${y}">${E(ab)}</span>`:''); }).join('')}</tr>`).join('');
   const sumRow=(label,vals,{cls='',sign='',neg=false,title='',tips=null}={})=>`<tr class="${cls}" ${title?`title="${esc(title)}"`:''}><td>${label}</td>${vals.map((v,i)=>(tips&&tips[i]?`<td class="n amt ${neg?'neg':''}" title="${esc(tips[i])}" style="cursor:help;text-decoration:underline dotted">${Math.abs(v)>=1?(v<0||neg?'−':sign)+E(Math.abs(v)):'–'}</td>`:A(Math.abs(v)>=1?(v<0||neg?'−':sign)+E(Math.abs(v)):'–',neg?'neg':(sign==='+'?(v<0?'neg':'pos'):'')))+X(pct(v,i,neg||v<0?'−':(sign==='+'?'+':'')))).join('')}</tr>`;
   const rS_=numIn(Math.round(rS*100)/100);
+  const key=tot.map((v,i)=>v-lostY[i]+gainY[i]);
+  const infl=yrs.map(y=>+yp(y).infl||0);
+  const real=key.map((v,i)=>v-pBase(i)*infl[i]/100);
+  // scenario's: alleen goud, aandelen en crypto rekenen anders; de rekenstappen blijven gelijk
+  const hasW=accs.some(a=>TYPES[a.type].waarde);
+  const yTot=sm=>{ const t=yrs.map(()=>0); sm.forEach((m,k)=>{ const yi=yrs.indexOf(+iYm(c+k+1).slice(0,4)); if(yi>=0) t[yi]+=m.total; }); return t; };
+  const scen=hasW?{low:yTot(expReturnSim(Math.max(1,months),'low')),high:yTot(expReturnSim(Math.max(1,months),'high'))}:null;
+  const scLow=numIn(+S.settings.scenLow||0), scHigh=numIn(+(S.settings.scenHigh??3));
+  // verwachting onthouden voor later (verwacht tegenover werkelijk); alleen voor jaren die nog moeten beginnen
+  rememberForecast(yrs.map((y,i)=>({y,eur:key[i],pct:pBase(i)?key[i]/pBase(i):null})).filter(x=>x.y>cy));
+  const scRow=(label,vals,title)=>`<tr title="${esc(title)}"><td class="small">${label}</td>${vals.map((v,i)=>A(Math.abs(v)>=1?(v<0?'−':'')+E(Math.abs(v)):'–',v<0?'neg':'')+X(pct(v,i,v<0?'−':''))).join('')}</tr>`;
   return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Per rekening: rente/rendement per jaar en het gemiddelde saldo, alsof er niets wordt uitgegeven; het percentage staat bij de rekening. Onderaan twee rekenstappen (aankopen en spaaroverschot) en daaronder het belangrijkste cijfer: het <b>verwachte rendement op je vermogen</b>, als % van je gemiddelde vermogen. <span class="badge g">zeker</span> vaste rente · <span class="badge">verwacht</span> schatting.</p>
     <div class="tablewrap"><table class="rtab">
     <tr><th rowspan="2">Rekening</th>${yrs.map(y=>`<th class="n" colspan="2" style="text-align:center;border-bottom:0">${y}${y===cy?' (rest)':''}</th>`).join('')}</tr>
@@ -1866,11 +1883,48 @@ function expRendCard(){
     ${sumRow(`<span class="muted small">− Geen rente over uitgegeven geld (rekenstap, ${rS_}%)</span>`,lostY,{neg:true,cls:'muted',tips:lostItems.map((L,yi)=>L.length?['Opbouw '+yrs[yi]+' (bedrag × '+rS_+'% × maanden/12):',...L.sort((a,b)=>b.v-a.v).map(x=>`• ${x.txt}${x.inv?' (investering)':''}, ${mLong(x.ym)}: ${E(x.amt)} × ${x.n} mnd → −${E(x.v)}`)].join('\n'):''),title:`Rekenstap: de bedragen per rekening tellen ook rente over geld dat je al hebt uitgegeven. Die wordt hier weer afgehaald (uitgegeven bedrag × gemiddelde spaarrente ${rS_}%). Dit is geen verlies of kosten.`})}
     <tr class="muted" title="Inkomsten − uitgaven in dat jaar; gaat naar je spaarrekening"><td class="small">Overschot (inkomsten − uitgaven)</td>${surY.map(v=>A(Math.abs(v)>=1?(v<0?'−':'')+E(Math.abs(v)):'–',v<0?'neg':'')+X()).join('')}</tr>
     ${sumRow(`<span class="muted small">+ Rente over gespaard overschot (rekenstap, ${rS_}%)</span>`,gainY,{sign:'+',cls:'muted',title:`Rekenstap: wat je per maand overhoudt gaat naar je spaarrekening en levert daar rente op (gemiddelde spaarrente ${rS_}%).`})}
-    ${sumRow('<b>Verwacht rendement op je vermogen</b>',tot.map((v,i)=>v-lostY[i]+gainY[i]),{cls:'tot keyrow',title:'Rente en rendement over het geld dat je echt hebt, als % van je gemiddelde vermogen in dat jaar. Dit cijfer zegt hoe goed je vermogen het doet, los van wat je uitgeeft.'})}
+    ${sumRow('<b>Verwacht rendement op je vermogen</b>',key,{cls:'tot keyrow',title:'Rente en rendement over het geld dat je echt hebt, als % van je gemiddelde vermogen in dat jaar. Dit cijfer zegt hoe goed je vermogen het doet, los van wat je uitgeeft.'})}
+    <tr title="Verwacht rendement min de inflatie (Instellingen of per jaar bij 30 jaar). Zo zie je of je vermogen echt meer waard wordt."><td>Reëel rendement <span class="small muted">(na inflatie: ${[...new Set(infl)].map(numIn).join(' / ')}%)</span></td>${real.map((v,i)=>A(Math.abs(v)>=1?(v<0?'−':'+')+E(Math.abs(v)):'–',v<0?'neg':'pos')+X(pBase(i)?(v<0?'−':'+')+P(Math.abs(v)/pBase(i)):'')).join('')}</tr>
+    ${scen?`<tr class="muted"><td class="small" colspan="${1+yrs.length*2}" style="padding-top:12px"><b>Scenario's</b>: verwacht rendement op je vermogen als goud, aandelen en crypto anders uitpakken (in te stellen bij Instellingen)</td></tr>
+    ${scRow(`Voorzichtig (beleggingen ${scLow}%)`,key.map((v,i)=>v-tot[i]+scen.low[i]),`Goud, aandelen en crypto leveren ${scLow}% per jaar op. Rente op sparen en deposito's blijft gelijk.`)}
+    ${scRow('Neutraal (je eigen verwachting)',key,'Het verwachte rendement dat je per rekening hebt ingesteld.')}
+    ${scRow(`Gunstig (verwachting +${scHigh}%-punt)`,key.map((v,i)=>v-tot[i]+scen.high[i]),`Goud, aandelen en crypto leveren ${scHigh} procentpunt meer op dan je verwachting.`)}`:''}
     <tr class="muted" title="Gemiddeld vermogen per maand in dat jaar (uit Komende maanden). Basis voor de percentages bij de totalen."><td class="small">Gemiddeld vermogen (basis %)</td>${vermAvg.map(v=>A(v!=null?E(v):'–','small')+X()).join('')}</tr>
     <tr class="muted" title="Dit jaar: werkelijk. Later: verwacht, uit Komende maanden."><td class="small">Vermogen op 1 januari</td>${vermStart.map((v,i)=>A(v!=null?E(v):'–','small')+X(`<span class="small">${yrs[i]===cy?'werkelijk':'verwacht'}</span>`)).join('')}</tr>
     </table></div>
 </div>`;
+}
+function rememberForecast(list){
+  S.rendForecast ||= {}; let ch=false;
+  for(const f of list){ if(f.eur==null||isNaN(f.eur)) continue; const o=S.rendForecast[f.y], eur=Math.round(f.eur), pct=f.pct==null?null:Math.round(f.pct*10000)/10000;
+    if(!o||o.eur!==eur||o.pct!==pct){ S.rendForecast[f.y]={eur,pct,at:todayStr()}; ch=true; } }
+  if(ch) setTimeout(save,0);
+}
+const MIX=[['sparen','Sparen','#1d5fbf'],['betaal','Betaalrekening en contant','#93b8ea'],['deposito',"Deposito's",'#0b2545'],['goud','Goud','#eda100'],['aandelen','Aandelen / beleggingen','#1baf7a'],['crypto','Crypto','#eb6834'],['overig','Overig','#9aa3af']];
+const mixKey=a=>a.type==='spaar'?'sparen':(a.type==='betaal'||a.type==='contant')?'betaal':a.type in {deposito:1,goud:1,aandelen:1,crypto:1}?a.type:'overig';
+function wealthMixCard(){
+  const accs=S.accounts.filter(a=>currentOf(a.id)); if(!accs.length) return '';
+  const val={}, ret={}; for(const a of accs){ const k=mixKey(a); val[k]=(val[k]||0)+currentOf(a.id).value; }
+  const sim=expReturnSim(12); sim.forEach(m=>{ for(const x of m.byAcc){ const a=accById(x.id); if(a){ const k=mixKey(a); ret[k]=(ret[k]||0)+x.amt; } } });
+  const items=MIX.filter(([k])=>val[k]>0).map(([k,n,col])=>({key:k,name:n,value:val[k],color:col}));
+  const T=sum(items.map(i=>i.value)), R=sum(Object.values(ret));
+  return `<div class="card"><h2>Verdeling van je vermogen</h2><p class="small muted">Huidige waarde per soort, met het verwachte rendement over de komende 12 maanden. Zo zie je waar je rendement vandaan komt, en hoeveel van je geld vaststaat of schommelt.</p>
+  <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start"><div style="flex:1 1 320px">${pieChart(items,{size:220,center:'Vermogen'}).replace(/<div class="plegs">[\s\S]*<\/div><\/div>$/,'</div>')}</div>
+  <div class="tablewrap" style="flex:1 1 380px"><table><tr><th>Soort</th><th class="n">Waarde</th><th class="n">Aandeel</th><th class="n">Rendement 12 mnd</th><th class="n">%</th></tr>
+  ${items.map(i=>{ const r=ret[i.key]||0; return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${i.color};margin-right:6px"></i>${esc(i.name)}</td><td class="n">${E(i.value)}</td><td class="n">${P(i.value/T)}</td><td class="n">${r>=1?E(r):'–'}</td><td class="n">${r>=1?P(r/i.value):'–'}</td></tr>`; }).join('')}
+  <tr class="tot"><td>Totaal</td><td class="n">${E(T)}</td><td class="n">100%</td><td class="n">${E(R)}</td><td class="n">${T?P(R/T):'–'}</td></tr></table>
+  <p class="small muted" style="margin-top:6px">Deposito's: alleen rente die in de komende 12 maanden wordt uitbetaald. Goud, aandelen en crypto: je eigen verwachting per rekening.</p></div></div></div>`;
+}
+function forecastCard(){
+  const F=S.rendForecast||{}, cy=curY();
+  const past=Object.keys(F).map(Number).filter(y=>y<cy).sort();
+  const head=`<div class="card"><h2>Verwacht tegenover werkelijk</h2>`;
+  if(!past.length){ const nxt=Object.keys(F).map(Number).filter(y=>y>=cy).sort()[0];
+    return head+`<p class="small muted">De app onthoudt elk jaar de verwachting die je hierboven ziet (de laatste stand vóór 1 januari). Zodra een jaar voorbij is, staat hier wat je verwachtte naast wat het werkelijk werd. ${nxt?`De eerste vergelijking komt na afloop van <b>${nxt}</b>; de verwachting voor dat jaar staat nu op ${E(F[nxt].eur)}${F[nxt].pct!=null?' ('+P(F[nxt].pct)+')':''}.`:''}</p></div>`; }
+  return head+`<p class="small muted">Verwacht: de laatste verwachting vóór het begin van het jaar. Werkelijk: het berekende of ontvangen rendement uit het overzicht hieronder.</p>
+  <div class="tablewrap"><table><tr><th>Jaar</th><th class="n">Verwacht</th><th class="n">Werkelijk</th><th class="n">Verschil</th></tr>
+  ${past.map(y=>{ const f=F[y], w=totalRend(y); const d=w&&w.eur!=null?w.eur-f.eur:null;
+    return `<tr><td>${y}</td><td class="n">${E(f.eur)}${f.pct!=null?` <span class="small muted">${P(f.pct)}</span>`:''}</td><td class="n">${w?(w.eur!=null?E(w.eur)+' ':'')+(w.pct!=null?`<span class="small muted">${P(w.pct)}</span>`:''):'<span class="muted">–</span>'}</td><td class="n ${d==null?'':d<0?'neg':'pos'}">${d==null?'–':(d<0?'−':'+')+E(Math.abs(d))}</td></tr>`; }).join('')}</table></div></div>`;
 }
 function vRendement(){
   const years=[...new Set(S.meas.map(m=>+m.date.slice(0,4)).concat(S.histRend.map(h=>+h.year)))].sort(); if(!years.includes(curY())) years.push(curY());
@@ -1879,6 +1933,8 @@ function vRendement(){
   return `<div class="row"><div><h1>Rendement</h1><p class="sub">Per rekening en voor het totale vermogen.</p></div><span class="spacer"></span><button class="btn" data-a="addHR">+ Rendement handmatig</button></div>${demoBanner()}
 
   ${expRendCard()}
+  ${wealthMixCard()}
+  ${forecastCard()}
   <div class="card"><h2>Rendement tot nu, per jaar</h2><div class="tablewrap"><table><tr><th>Rekening</th>${ys.map(y=>`<th class="n">${y}</th>`).join('')}</tr>
     ${S.accounts.map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
     <tr class="tot"><td>Totaal vermogen</td>${ys.map(y=>`<td class="n">${cell(totalRend(y))}</td>`).join('')}</tr></table></div></div>
@@ -2008,6 +2064,9 @@ function vInstellingen(){
       <div class="f"><label>Standaard vermogensrendement per jaar (%)</label><input id="s_rend" inputmode="decimal" value="${numIn(s.rend)}"></div>
       <div class="f"><label>Standaard inkomensgroei per jaar (%)</label><input id="s_growth" inputmode="decimal" value="${numIn(s.growth)}"></div>
       <div class="f"><label>Vermogensbelasting (box 3), % van het vermogen per jaar</label><input id="s_box3" inputmode="decimal" value="${numIn(s.box3)}"><div class="help">Standaard 0. Wordt in de prognose van het rendement afgetrokken.</div></div>
+      <div class="f"><label>Herbeleggen na afloop van een deposito: rente (%)</label><input id="s_reinv" inputmode="decimal" value="${s.reinvestRate==null?'':numIn(s.reinvestRate)}" placeholder="leeg = dezelfde rente als de deposito"><div class="help">Voor het verwachte rendement: na de einddatum rekent de app alsof je het geld opnieuw vastzet tegen dit percentage. Leeg = dezelfde rente als de deposito. 0 = niet herbeleggen. Per deposito kun je dit bij Bewerken aanpassen.</div></div>
+      <div class="f"><label>Scenario voorzichtig: rendement beleggingen, goud en crypto (%)</label><input id="s_scenLow" inputmode="decimal" value="${numIn(s.scenLow??0)}"></div>
+      <div class="f"><label>Scenario gunstig: extra bovenop het verwachte rendement (%-punt)</label><input id="s_scenHigh" inputmode="decimal" value="${numIn(s.scenHigh??3)}"></div>
       <button class="btn" data-a="saveSet">Opslaan</button></div>
   </div>
   <div class="grid g2">
@@ -2085,6 +2144,11 @@ const HELP={
   <li><span class="badge">verwacht</span> <b>Spaarrekeningen:</b> het ingestelde (variabele) rentepercentage, met rente op rente.</li>
   <li><span class="badge">verwacht</span> <b>Goud, aandelen, crypto:</b> het verwachte rendement dat je per rekening instelt (Bewerken).</li></ul>
   <p><b>Percentage per rekening:</b> rendement in een jaar ÷ <b>gemiddeld saldo</b> in dat jaar (gem.).</p><p><b>Rekenstappen onderaan:</b> de bedragen per rekening gaan uit van het saldo zonder aankopen en zonder spaaroverschot. Twee rekenstappen maken dat kloppend:</p><ul><li><b>Geen rente over uitgegeven geld:</b> geld dat je uitgeeft is weg en levert geen rente meer op. Die rente wordt eraf gehaald (uitgegeven bedrag × gemiddelde spaarrente, vanaf de maand na de aankoop). Dit is geen verlies of kosten, alleen het weghalen van rente die je nooit krijgt.</li><li><b>Rente over gespaard overschot:</b> wat je per maand overhoudt gaat naar je spaarrekening en levert daar rente op.</li></ul><p><b>Verwacht rendement op je vermogen</b> = rente en rendement over het geld dat je echt hebt, gedeeld door je <b>gemiddelde vermogen</b> in dat jaar. Dat zegt hoe goed je vermogen het doet, los van wat je uitgeeft: geef je €35.000 uit, dan dalen de rente én het gemiddelde vermogen, en blijft het percentage ongeveer gelijk.</p>
+  <p><b>Herbeleggen:</b> na de einddatum van een deposito rekent de app alsof je het geld opnieuw vastzet, met elk jaar rente naar je betaalrekening (<span class="badge">verwacht</span>). Het percentage stel je in bij Instellingen (leeg = dezelfde rente, 0 = niet herbeleggen) of per deposito bij Bewerken.</p>
+  <p><b>Reëel rendement:</b> verwacht rendement min de inflatie. <i>Voorbeeld:</i> 3,2% rendement bij 2% inflatie = 1,2% reëel: je vermogen wordt echt meer waard.</p>
+  <p><b>Scenario's:</b> wat er gebeurt als goud, aandelen en crypto tegenvallen (voorzichtig, standaard 0%) of meevallen (gunstig, standaard 3 procentpunt boven je verwachting). Rente op sparen en deposito's blijft gelijk.</p>
+  <p><b>Verdeling van je vermogen:</b> huidige waarde per soort, met het verwachte rendement over de komende 12 maanden.</p>
+  <p><b>Verwacht tegenover werkelijk:</b> de app onthoudt de verwachting voor elk komend jaar (de laatste stand vóór 1 januari). Na afloop van het jaar zie je die naast het werkelijke rendement.</p>
   <p><b>Rendement tot nu:</b> bij rekeningen met rente telt eerst de rente die je echt hebt ontvangen; anders een schatting op basis van saldi en rente. Bij goud en beleggingen: waardestijging min bijgestorte bedragen.</p>`],
  prognose:['30 jaar',`<p>Een berekening van je vermogen over 30 jaar. Geen garantie en geen beleggingsadvies.</p>
   <p><b>Per jaar:</b> vermogen begin + rendement + inkomsten − uitgaven = vermogen eind.</p>
@@ -2193,6 +2257,8 @@ document.addEventListener('click',e=>{
     case 'saveSet': {
       const g=i=>parseNum($('#s_'+i).value); const vals={threshold:g('threshold'),infl:g('infl'),rend:g('rend'),growth:g('growth'),box3:g('box3')};
       if(Object.values(vals).some(v=>isNaN(v))) { toast('Controleer de getallen'); return; }
+      const rv=$('#s_reinv').value.trim(); S.settings.reinvestRate=rv===''?null:parseNum(rv); if(rv!==''&&isNaN(S.settings.reinvestRate)){ toast('Controleer het herbeleggingspercentage'); return; }
+      const sl=parseNum($('#s_scenLow').value), sh=parseNum($('#s_scenHigh').value); if(!isNaN(sl)) S.settings.scenLow=sl; if(!isNaN(sh)) S.settings.scenHigh=sh;
       Object.assign(S.settings,vals); S.settings.people=$('#s_people').value.split(',').map(x=>x.trim()).filter(Boolean); save(); render(); toast('Instellingen opgeslagen'); break; }
     case 'catAdd': { const k=b.dataset.kind, el=$('#newCat_'+k), nm=el.value.trim(), list=k==='uit'?S.expCats:S.incCats;
       if(!nm) { el.focus(); return; } if(nm===AFS||list.includes(nm)){ toast('Die categorie bestaat al'); return; }
