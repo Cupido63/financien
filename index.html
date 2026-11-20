@@ -174,7 +174,7 @@ tr.ysum td,tr.ysum th{background:var(--b100)!important;border-bottom:2px solid v
 .ktab th,.ktab td{white-space:nowrap}.ktab th.kpast{background:#eef1f5;color:#5a6b85}.ktab th.yname{min-width:200px;max-width:none}.ktab{width:auto;min-width:0}.ktab td.n,.ktab thead th{min-width:86px}.ktab td.n{padding:6px 8px;font-size:13px}
 .helpbtn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;border:0;background:var(--b100);color:var(--b700);font-weight:700;font-size:14px;cursor:pointer;vertical-align:middle;margin-left:6px}.helpbtn:hover{background:var(--b200)}
 .helpm{max-width:640px}.helptxt{font-size:14px;line-height:1.55}.helptxt p{margin:0 0 10px}.helptxt ul{margin:0 0 10px;padding-left:20px}.helptxt li{margin-bottom:4px}
-.rtab td,.rtab th{padding:5px 10px}.rtab td:first-child{min-width:340px}
+.rtab td,.rtab th{padding:5px 10px}.rtab td:first-child{min-width:300px}.rtab td.amt,.rtab th.amt{white-space:nowrap;font-variant-numeric:tabular-nums;padding-right:4px}.rtab td.aux,.rtab th.aux{white-space:nowrap;color:var(--muted);font-size:12px;padding-left:4px;padding-right:16px;font-variant-numeric:tabular-nums}.rtab tr.muted td{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -1843,19 +1843,29 @@ function expRendCard(){
     return hasRate(a)?`${E(cur.value)} · ${numIn(rateAt(a,todayStr()))}% rente (variabel)`:`${E(cur.value)} · geen rente`; };
   const badge=a=>rendSure(a)?'<span class="badge g">zeker</span>':(hasRate(a)||TYPES[a.type].waarde)?'<span class="badge">verwacht</span>':'';
   const ordered=[...accs.filter(rendSure),...accs.filter(a=>!rendSure(a))];
-  const rows=ordered.map(a=>`<tr><td><a href="#rendement" data-a="editAcc" data-id="${a.id}" title="Rentepercentage of verwacht rendement instellen" style="color:inherit;font-weight:600;text-decoration:none">${esc(a.name)} ✎</a> ${badge(a)} <span class="small muted">· ${accInfo(a)}</span></td>${yrs.map((y,i)=>{ const v=per[a.id]?per[a.id][i]:0, ab=avgBal(a.id,i), nM=balN[a.id]?balN[a.id][i]:12, pb=a.type==='deposito'?ab:ab*nM/12; return `<td class="n" style="white-space:nowrap">${v>=1?'<b>'+E(v)+'</b>':'<span class="muted">–</span>'}${ab>=1&&(hasRate(a)||TYPES[a.type].waarde)?` <span class="muted" style="font-size:12px" title="Gemiddeld verwacht saldo in ${y}${y===cy?' (rest van het jaar)':''}">· gem. ${E(ab)}</span>`:''}</td>`; }).join('')}</tr>`).join('');
-  return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Per rekening: rente/rendement per jaar en het gemiddelde saldo (gem.), alsof er niets wordt uitgegeven; het percentage staat bij de rekening. Onderaan de correcties voor aankopen en voor je maandelijkse overschot. Totalen: % t.o.v. het gemiddelde vermogen in dat jaar. <span class="badge g">zeker</span> vaste rente · <span class="badge">verwacht</span> schatting.</p>
-    <div class="tablewrap"><table class="rtab"><tr><th>Rekening</th>${yrs.map(y=>`<th class="n">${y}${y===cy?' (rest)':''}</th>`).join('')}</tr>${rows}
-    <tr title="% t.o.v. het gemiddelde vermogen in dat jaar"><td><span class="badge g">zeker</span> deposito's</td>${sure.map((v,i)=>`<td class="n">${v>=1?E(v)+pc(v,pBase(i)):'–'}</td>`).join('')}</tr>
-    <tr title="% t.o.v. het gemiddelde vermogen in dat jaar"><td><span class="badge">verwacht</span> overige</td>${exp.map((v,i)=>`<td class="n">${v>=1?E(v)+pc(v,pBase(i)):'–'}</td>`).join('')}</tr>
-    <tr class="tot" title="% t.o.v. het gemiddelde vermogen in dat jaar"><td>Totaal</td>${tot.map((v,i)=>`<td class="n">${E(v)}${pBase(i)?pc(v,pBase(i)):''}</td>`).join('')}</tr>
-    <tr><td>Investeringen en incidentele uitgaven</td>${outY.map((v,i)=>`<td class="n" ${itemsY[i].length?`title="${esc(itemsY[i].map(x=>x.txt+(x.inv?' (investering)':'')+', '+mLong(x.ym)+': '+E(x.amt)).join('\n'))}" style="cursor:help;text-decoration:underline dotted"`:''}>${v>=1?E(v):'–'}</td>`).join('')}</tr>
-    <tr title="Het saldo is lager door aankopen en uitgaven, dus er komt minder rente binnen (gemiddelde spaarrente ${numIn(Math.round(rS*100)/100)}%). % t.o.v. het gemiddelde vermogen."><td>− Correctie: lager saldo door aankopen <span class="small muted">(${numIn(Math.round(rS*100)/100)}%)</span></td>${lostY.map((v,i)=>`<td class="n neg">${v>=1?'−'+E(v)+` <span class="muted" style="font-size:12.5px">−${P(pBase(i)?v/pBase(i):0)}</span>`:'–'}</td>`).join('')}</tr>
-    <tr title="Inkomsten − uitgaven in dat jaar; gaat naar je spaarrekening"><td>Overschot (inkomsten − uitgaven)</td>${surY.map(v=>`<td class="n ${v<0?'neg':''}">${Math.abs(v)>=1?(v<0?'−':'')+E(Math.abs(v)):'–'}</td>`).join('')}</tr>
-    <tr title="Spaarrente (${numIn(Math.round(rS*100)/100)}% gemiddeld) over het gespaarde overschot. % t.o.v. het gemiddelde vermogen."><td>+ Rente over gespaard overschot <span class="small muted">(${numIn(Math.round(rS*100)/100)}%)</span></td>${gainY.map((v,i)=>`<td class="n ${v<0?'neg':'pos'}">${Math.abs(v)>=1?(v<0?'−':'+')+E(Math.abs(v))+` <span class="muted" style="font-size:12.5px">${v<0?'−':'+'}${P(pBase(i)?Math.abs(v)/pBase(i):0)}</span>`:'–'}</td>`).join('')}</tr>
-    <tr class="tot" title="% t.o.v. het gemiddelde vermogen in dat jaar"><td>Totaal na correctie</td>${tot.map((v,i)=>{ const n=v-lostY[i]+gainY[i]; return `<td class="n">${E(n)}${pBase(i)?pc(n,pBase(i)):''}</td>`; }).join('')}</tr>
-    <tr title="Gemiddeld vermogen per maand in dat jaar (uit Komende maanden). Dit jaar: de resterende maanden. Basis voor de percentages bij de totalen."><td class="small muted">Gemiddeld vermogen (basis %)</td>${vermAvg.map(v=>`<td class="n small muted">${v!=null?E(v):'–'}</td>`).join('')}</tr>
-    <tr title="Dit jaar: werkelijk. Later: verwacht, uit Komende maanden."><td class="small muted">Vermogen op 1 januari</td>${vermStart.map((v,i)=>`<td class="n small muted">${v!=null?E(v):'–'}${yrs[i]===cy?' (werkelijk)':' (verwacht)'}</td>`).join('')}</tr></table></div>
+  // twee kolommen per jaar: bedrag (altijd precies onder elkaar) en een hulpkolom (gem. saldo of %)
+  const A=(html,cls='')=>`<td class="n amt ${cls}">${html}</td>`, X=(html='')=>`<td class="n aux">${html}</td>`;
+  const pct=(v,i,sign='')=>pBase(i)&&Math.abs(v)>=1?sign+P(Math.abs(v)/pBase(i)):'';
+  const rows=ordered.map(a=>`<tr><td><a href="#rendement" data-a="editAcc" data-id="${a.id}" title="Rentepercentage of verwacht rendement instellen" style="color:inherit;font-weight:600;text-decoration:none">${esc(a.name)} ✎</a> ${badge(a)} <span class="small muted">· ${accInfo(a)}</span></td>${yrs.map((y,i)=>{ const v=per[a.id]?per[a.id][i]:0, ab=avgBal(a.id,i);
+      return A(v>=1?'<b>'+E(v)+'</b>':'<span class="muted">–</span>')+X(ab>=1&&(hasRate(a)||TYPES[a.type].waarde)?`<span title="Gemiddeld verwacht saldo in ${y}">${E(ab)}</span>`:''); }).join('')}</tr>`).join('');
+  const sumRow=(label,vals,{cls='',sign='',neg=false,title=''}={})=>`<tr class="${cls}" ${title?`title="${esc(title)}"`:''}><td>${label}</td>${vals.map((v,i)=>A(Math.abs(v)>=1?(v<0||neg?'−':sign)+E(Math.abs(v)):'–',neg?'neg':(sign==='+'?(v<0?'neg':'pos'):''))+X(pct(v,i,neg||v<0?'−':(sign==='+'?'+':'')))).join('')}</tr>`;
+  const rS_=numIn(Math.round(rS*100)/100);
+  return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Per rekening: rente/rendement per jaar en het gemiddelde saldo, alsof er niets wordt uitgegeven; het percentage staat bij de rekening. Onderaan de correcties voor aankopen en voor je maandelijkse overschot, met het % t.o.v. het gemiddelde vermogen. <span class="badge g">zeker</span> vaste rente · <span class="badge">verwacht</span> schatting.</p>
+    <div class="tablewrap"><table class="rtab">
+    <tr><th rowspan="2">Rekening</th>${yrs.map(y=>`<th class="n" colspan="2" style="text-align:center;border-bottom:0">${y}${y===cy?' (rest)':''}</th>`).join('')}</tr>
+    <tr>${yrs.map(()=>`<th class="n amt">Bedrag</th><th class="n aux">gem. saldo / %</th>`).join('')}</tr>
+    ${rows}
+    ${sumRow('<span class="badge g">zeker</span> deposito\'s',sure,{title:'% t.o.v. het gemiddelde vermogen in dat jaar'})}
+    ${sumRow('<span class="badge">verwacht</span> overige',exp,{title:'% t.o.v. het gemiddelde vermogen in dat jaar'})}
+    ${sumRow('Totaal',tot,{cls:'tot',title:'% t.o.v. het gemiddelde vermogen in dat jaar'})}
+    <tr><td>Investeringen en incidentele uitgaven</td>${outY.map((v,i)=>`<td class="n amt" ${itemsY[i].length?`title="${esc(itemsY[i].map(x=>x.txt+(x.inv?' (investering)':'')+', '+mLong(x.ym)+': '+E(x.amt)).join('\n'))}" style="cursor:help;text-decoration:underline dotted"`:''}>${v>=1?E(v):'–'}</td>`+X()).join('')}</tr>
+    ${sumRow(`− Correctie: lager saldo door aankopen <span class="small muted">(${rS_}%)</span>`,lostY,{neg:true,title:`Het saldo is lager door aankopen en uitgaven, dus er komt minder rente binnen (gemiddelde spaarrente ${rS_}%). % t.o.v. het gemiddelde vermogen.`})}
+    <tr title="Inkomsten − uitgaven in dat jaar; gaat naar je spaarrekening"><td>Overschot (inkomsten − uitgaven)</td>${surY.map(v=>A(Math.abs(v)>=1?(v<0?'−':'')+E(Math.abs(v)):'–',v<0?'neg':'')+X()).join('')}</tr>
+    ${sumRow(`+ Rente over gespaard overschot <span class="small muted">(${rS_}%)</span>`,gainY,{sign:'+',title:`Spaarrente (${rS_}% gemiddeld) over het gespaarde overschot. % t.o.v. het gemiddelde vermogen.`})}
+    ${sumRow('Totaal na correctie',tot.map((v,i)=>v-lostY[i]+gainY[i]),{cls:'tot',title:'% t.o.v. het gemiddelde vermogen in dat jaar'})}
+    <tr class="muted" title="Gemiddeld vermogen per maand in dat jaar (uit Komende maanden). Basis voor de percentages bij de totalen."><td class="small">Gemiddeld vermogen (basis %)</td>${vermAvg.map(v=>A(v!=null?E(v):'–','small')+X()).join('')}</tr>
+    <tr class="muted" title="Dit jaar: werkelijk. Later: verwacht, uit Komende maanden."><td class="small">Vermogen op 1 januari</td>${vermStart.map((v,i)=>A(v!=null?E(v):'–','small')+X(`<span class="small">${yrs[i]===cy?'werkelijk':'verwacht'}</span>`)).join('')}</tr>
+    </table></div>
 </div>`;
 }
 function vRendement(){
