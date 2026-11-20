@@ -172,6 +172,8 @@ tr.ysum td,tr.ysum th{background:var(--b100)!important;border-bottom:2px solid v
 .acard .badge{font-size:10.5px;padding:1px 6px}
 @media (max-width:900px){ .accgrid{grid-template-columns:minmax(0,1fr)} }
 .ktab th,.ktab td{white-space:nowrap}.ktab th.kpast{background:#eef1f5;color:#5a6b85}.ktab th.yname{min-width:200px;max-width:none}.ktab{width:auto;min-width:0}.ktab td.n,.ktab thead th{min-width:86px}.ktab td.n{padding:6px 8px;font-size:13px}
+.helpbtn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;border:0;background:var(--b100);color:var(--b700);font-weight:700;font-size:14px;cursor:pointer;vertical-align:middle;margin-left:6px}.helpbtn:hover{background:var(--b200)}
+.helpm{max-width:640px}.helptxt{font-size:14px;line-height:1.55}.helptxt p{margin:0 0 10px}.helptxt ul{margin:0 0 10px;padding-left:20px}.helptxt li{margin-bottom:4px}
 </style>
 </head>
 <body>
@@ -1029,6 +1031,7 @@ function interestAnchor(a,date){
 function maturityOf(a){
   if(!endDateOf(a) || a.besch) return null;
   const cur=currentOf(a.id); let amt=(a.endAmount!=null&&a.endAmount!==''&&!isNaN(a.endAmount))?+a.endAmount:null, est=false;
+  if(amt==null && cur && a.type==='deposito'){ amt=cur.value; }
   if(amt==null && cur){ const anchor=interestAnchor(a,cur.date); const yrs=Math.max(0,daysBetween(anchor,endDateOf(a)))/365; amt=cur.value*Math.pow(1+rateAt(a,cur.date)/100,yrs); est=true; }
   return {acc:a, date:endDateOf(a), amount:amt, est, cur, derived:!a.endDate};
 }
@@ -1036,6 +1039,7 @@ function vrijPlan(H){
   const st=monthStatus(curYm()), today=todayStr(), c=ymI(curYm()), base=expenseBase(), baseM=sum(Object.values(base.cats)), fixNow=fixedNowAnnual();
   const mats=S.accounts.map(maturityOf).filter(m=>m&&m.amount!=null&&m.date>today).sort((a,b)=>a.date<b.date?-1:1);
   const inlegNB=sum(S.accounts.filter(a=>!a.besch&&+a.inleg>0&&(!a.endDate||a.endDate>today)).map(a=>+a.inleg));
+  const rsim=expReturnSim(Math.max(1,H));
   let v=st.besch; const rows=[];
   for(let k=0;k<=H;k++){
     const ym=iYm(c+k), y=+ym.slice(0,4), m=+ym.slice(5,7), infF=Math.pow(1+S.settings.infl/100,Math.max(0,(c+k-ymI(curYm()))/12));
@@ -1049,6 +1053,7 @@ function vrijPlan(H){
     for(const a of S.actuals) if(a.kind==='uit'&&!a.grid&&a.monthTotal==null&&after(a.date)) events.push({date:a.date,txt:a.note||a.cat,amt:-a.amount,kind:isInv(a)?'aankoop':'uitgave'});
     for(const e of S.expected) if(e.ym===ym && (k>0 || e.ym>curYm())) events.push({date:lastDay(ym),txt:'Verwacht: '+(e.note||e.cat),amt:(e.kind==='in'?0:-e.amount),kind:'uitgave',skip:e.kind==='in'});
     for(const mt of mats) if(after(mt.date)) events.push({date:mt.date,txt:'Komt vrij: '+mt.acc.name,amt:mt.amount,kind:'vrij',est:mt.est});
+    if(k>0 && rsim[k-1]) for(const x of rsim[k-1].byAcc) if(accById(x.id).type==='deposito') events.push({date:lastDay(ym),txt:'Rente: '+x.txt,amt:x.amt,kind:'vrij'});
     const inleg=(k>0&&vrijFlows)?inlegNB:0;
     const evSum=sum(events.filter(e=>!e.skip).map(e=>e.amt));
     v=v+inc-exp-inleg+evSum;
@@ -1115,9 +1120,9 @@ function expReturnSim(months){
     for(let k=1;k<=months;k++){ const ym=iYm(c+k); let amt=0; out[k-1].bal[a.id]=v;
       if(t.waarde){ amt=v*((+a.expRend||0)/100)/12; }
       else if(a.type==='deposito' && hasRate(a)){ if(end && ym>end.slice(0,7)) break;
-        if(pm.set.has(ym)){ if(pm.end){ const anc=interestAnchor(a,cur.date); amt=v*(Math.pow(1+rateAt(a,anc)/100,Math.max(0,daysBetween(anc,end))/365)-1); } else amt=v*rateAt(a,ym+'-01')/100*pm.step/12; } }
+        if(pm.set.has(ym)){ if(pm.end){ const anc=interestAnchor(a,cur.date); amt=v*rateAt(a,anc)/100*Math.max(0,daysBetween(anc,end))/365; } else amt=v*rateAt(a,ym+'-01')/100*pm.step/12; } }
       else if(hasRate(a)){ amt=v*rateAt(a,ym+'-01')/100/12; }
-      if(amt){ v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name,amt,id:a.id}); }
+      if(amt){ if(a.type!=='deposito') v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name,amt,id:a.id,toVrij:a.type==='deposito'||!!a.besch}); }
     }
   }
   return out;
@@ -1148,7 +1153,7 @@ function kortPlan(off=kortOff,count=12){
     const ret=sim[k-1]?sim[k-1].total:0, retL=sim[k-1]?sim[k-1].byAcc:[];
     const begin=v; v=v+inc-exp+sI-sE-sV+ret;
     const mat=sum(mats.filter(m=>inFirst(m.date)).map(m=>m.amount));
-    vr=vr+inc-exp+sI-sE-sV-inlegNB+mat;
+    vr=vr+inc-exp+sI-sE-sV-inlegNB+mat+sum((retL||[]).filter(x=>x.toVrij).map(x=>x.amt));
     rows.push({ym,begin,inc,exp,incI,expI,inv,sI,sE,sV,ret,retL,end:v,vrij:vr});
   }
   // venster: 12 maanden vanaf (volgende maand + kortOff); maanden t/m nu zijn werkelijke cijfers
@@ -1213,7 +1218,7 @@ function vKort(){
     {name:'Waarvan vrij opneembaar',values:rows.map(r=>r.vrij),color:'#93b8ea'}],h:240});
   const evList=rows.flatMap(r=>[...r.incI.map(x=>({ym:r.ym,t:'in',...x})),...r.expI.map(x=>({ym:r.ym,t:'uit',...x})),...r.inv.map(x=>({ym:r.ym,t:'inv',...x}))]);
   return `<div class="row"><div><h1>Komende maanden</h1><p class="sub">Je vermogen per maand, met inkomsten, uitgaven, incidentele bedragen en investeringen. Blader onbeperkt vooruit (verwachting) en terug (werkelijke cijfers). Zonder afschrijving: investeringen tellen in de maand van betaling.</p></div></div>${demoBanner()}
-  <div class="card"><h2>Per maand</h2><p class="small muted"><b>Scroll de tabel naar links of rechts</b> om onbeperkt terug of vooruit te kijken; er worden vanzelf maanden bijgeladen. Beweeg over een onderstreept bedrag om te zien waar het uit bestaat. Grijze kolommen zijn werkelijke cijfers (uit Invoeren en je saldi), de andere zijn de verwachting. Bij werkelijke maanden staat bij "Rendement / overig" het verschil tussen je saldi en de ingevoerde bedragen.</p>
+  <div class="card"><h2>Per maand</h2><p class="small muted">Scroll de tabel naar links of rechts. Grijs = werkelijk, wit = verwacht.</p>
     <div class="ywrap" id="kortWrap">${kortTableHtml()}</div></div>
   <div class="card"><div class="row"><button class="btn sec sm" data-a="kortOff" data-d="-12" title="12 maanden terug">«</button><button class="btn sec sm" data-a="kortOff" data-d="-1" title="Maand terug">‹</button>
     <span class="small muted">Tegels en grafieken:</span> <b style="font-size:16px">${mLong(first.ym)} – ${mLong(last.ym)}</b>
@@ -1231,7 +1236,7 @@ function vKort(){
   <div class="card"><h2>Erin en eruit per maand</h2><p class="small muted" style="margin-top:-4px">Per maand links (groen) wat erin komt, rechts (oranje/rood) wat eruit gaat. Beweeg over een blok voor het bedrag.</p>${flowBars(rows)}</div>
 
   <div class="card"><h2>Incidentele bedragen en investeringen in deze periode</h2>${evList.length?`<div class="tablewrap"><table><tr><th>Maand</th><th>Wat</th><th class="n">Bedrag</th></tr>${evList.map(e=>`<tr><td>${mLong(e.ym)}</td><td>${e.t==='inv'?'<span class="badge">investering</span> ':e.t==='in'?'<span class="badge g">inkomst</span> ':'<span class="badge w">uitgave</span> '}${esc(e.txt)}</td><td class="n ${e.t==='in'?'pos':'neg'}">${e.t==='in'?'+':'−'}${E(e.amt)}</td></tr>`).join('')}</table></div>`:'<p class="muted">Geen incidentele bedragen of investeringen in deze periode.</p>'}
-    <p class="small muted" style="margin-top:8px">Incidentele inkomsten: eenmalige bedragen bij Inkomen plannen en verwachtingen bij Invoeren. Incidentele uitgaven: verwachtingen en losse uitgaven met een datum in de toekomst. Investeringen: aankopen boven het grensbedrag, in de maand van betaling. Rendement/rente (verwachting): per rekening. Spaarrekeningen met het ingestelde rentepercentage, deposito's op hun uitkeringsdatums tot de einddatum, goud, aandelen en crypto met het verwachte rendement dat je bij die rekening instelt (Rekeningen → Bewerken). Beweeg over het bedrag voor de verdeling.</p></div>`;
+</div>`;
 }
 function vInkomen(){
   const people=[...S.settings.people,'Samen'];
@@ -1261,11 +1266,11 @@ function vInkomen(){
   const cf=incomeConflicts();
   const warn=(cf.plan.length||cf.exp.length)?`<div class="warn"><b>Let op:</b> bij <b>Invoeren</b> staan ook nog verwachte inkomsten voor de toekomst${cf.plan.length?` (${cf.plan.length} keer bij het jaaroverzicht)`:''}${cf.exp.length?` en ${cf.exp.length} losse verwachting${cf.exp.length===1?'':'en'}`:''}. Die gaan vóór wat hier staat en kunnen dubbel tellen of inkomsten wegdrukken. Wil je alles op deze ene pagina regelen? <button class="btn sm" data-a="incClear" style="margin-left:6px">Verwachtingen bij Invoeren wissen</button><div class="small" style="margin-top:4px">Werkelijk ontvangen bedragen uit het verleden blijven gewoon staan.</div></div>`:'';
   return `<div class="row"><div><h1>Inkomen plannen</h1><p class="sub">Eén plek voor al jullie netto inkomsten, nu en in de toekomst.</p></div></div>${demoBanner()}
-  <div class="info"><b>Zo werkt het:</b> vul per persoon elk inkomen in met het netto bedrag per maand, <b>vanaf</b> wanneer en <b>tot en met</b> wanneer. Bijvoorbeeld: salaris tot en met de maand dat je stopt met werken, pensioen en AOW vanaf de maand dat ze ingaan. Dit telt mee in <b>Maand</b>, <b>Vrij geld</b> en <b>30 jaar</b>. Bedragen zijn in euro's van nu; in de 30-jaarsplanning komt de inkomensgroei erbij.<br>Wat je <b>echt ontvangen</b> hebt, vul je in bij <b>Invoeren</b> (Werkelijk).</div>
+
   ${warn}
   ${people.filter(p=>p!=='Samen').map(card).join('')}
   ${card('Samen')}
-  <div class="card"><h2>Zo ziet jullie inkomen eruit, per jaar</h2><p class="small muted">Totaal netto per jaar in euro's van nu, per persoon en per soort inkomen (${esc(S.settings.people[0]||'')} in blauwtinten${S.settings.people[1]?', '+esc(S.settings.people[1])+' in oranjetinten':''}). Hier zie je meteen of salaris, pensioen en AOW op het juiste moment beginnen en stoppen, en in welk jaar een eenmalig bedrag binnenkomt. ${cy} telt vanaf deze maand. Beweeg over een blok voor het bedrag.</p>${chart}</div>`;
+  <div class="card"><h2>Zo ziet jullie inkomen eruit, per jaar</h2><p class="small muted">Totaal netto per jaar in euro's van nu, per persoon en per soort. Beweeg over een blok voor het bedrag.</p>${chart}</div>`;
 }
 function vVrij(){
   const pl=vrijPlan(vrijH), rows=pl.rows, minR=rows.reduce((a,r)=>r.end<a.end?r:a,rows[0]);
@@ -1286,19 +1291,19 @@ function vVrij(){
   <div class="card" style="margin-top:16px"><div class="row"><h2 style="margin:0">Verloop vrij opneembaar tegoed</h2><span class="spacer"></span>
     <div class="toggle" style="margin-right:8px">${[12,36,60,120].map(h=>`<button data-a="vrijH" data-v="${h}" class="${vrijH===h?'on':''}">${h<24?h+' mnd':h/12+' jaar'}</button>`).join('')}</div>
     <label class="small" style="display:flex;gap:6px;align-items:center;font-weight:600;color:var(--b800)"><input type="checkbox" id="vrijFlows" ${vrijFlows?'checked':''}> Inkomsten en uitgaven meetellen</label></div>
-    <p class="small muted" style="margin-top:8px">${vrijFlows?`Start met het tegoed van nu. Per maand komen de verwachte inkomsten erbij en gaan de gemiddelde uitgaven (${E(pl.baseM)} per maand, plus wijzigingen in vaste lasten)${pl.inlegNB?` en de inleg op vastgezette rekeningen (${E(pl.inlegNB)} per maand)`:''} eraf. Deposito's die vrijkomen en aankopen met een datum tellen mee in hun maand.`:'Alleen het tegoed van nu, deposito\'s die vrijkomen en aankopen met een datum. Zonder maandelijkse inkomsten en uitgaven: handig om te zien of de vrijval alleen al genoeg is.'}</p>
+
     ${chart}</div>
   <div class="grid angrid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
     <div class="card"><h2>Momenten in de planning</h2>${evRows.length?`<div class="tablewrap"><table><tr><th>Maand</th><th>Wat</th><th class="n">Bedrag</th><th class="n">Vrij na afloop van de maand</th></tr>${evRows.map(r=>r.events.map((e,i)=>`<tr><td>${i===0?mLong(r.ym):''}</td><td>${e.kind==='vrij'?'<span class="badge g">vrij</span> ':e.kind==='aankoop'?'<span class="badge">aankoop</span> ':''}${esc(e.txt)}${e.est?' <span class="small muted">(schatting)</span>':''}</td><td class="n ${e.amt<0?'neg':'pos'}">${e.amt<0?'−':'+'}${E(Math.abs(e.amt))}</td><td class="n">${i===r.events.length-1?`<b class="${r.end<0?'neg':''}">${E(r.end)}</b>`:''}</td></tr>`).join('')).join('')}</table></div>`:'<p class="muted">Nog geen deposito\'s met een einddatum en geen aankopen met een datum in deze periode.</p>'}
-      <p class="small muted" style="margin-top:8px">Aankopen voer je in bij <a href="#investeringen">Investeringen</a> of <a href="#prognose">30 jaar → Toekomstige aankopen</a>, met de datum waarop je wilt kopen.</p></div>
+</div>
     <div class="card"><h2>Vastgezet geld</h2>${nonBesch.length?`<div class="tablewrap"><table><tr><th>Rekening</th><th class="n">Waarde nu</th><th>Komt vrij op</th><th class="n">Verwacht bedrag</th><th></th></tr>${depRows}</table></div>`:'<p class="muted">Geen rekeningen die niet direct beschikbaar zijn.</p>'}
-      <p class="small muted" style="margin-top:8px">Vul bij een deposito via <b>Wijzig</b> de einddatum in. Het verwachte bedrag schat de app uit de huidige waarde en de rente; je kunt het ook zelf invullen. Na de einddatum: verplaats het geld in de app naar je spaar- of betaalrekening (nieuw saldo invoeren) en zet de deposito op nul.</p></div>
+</div>
   </div>
   <div class="card"><div class="row"><h2 style="margin:0">Per maand uitgerekend</h2><span class="spacer"></span><button class="btn ghost sm" data-a="vrijDetail">${vrijDetail?'Verbergen ▴':'Tonen ▾'}</button></div>
-    <p class="small muted" style="margin-top:6px">Zo komt de app per maand aan het vrij opneembaar tegoed: begin + inkomsten − uitgaven − inleg op vastgezette rekeningen ± momenten = eind.</p>
+
     ${vrijDetail?`<div class="tablewrap"><table><tr><th>Maand</th><th class="n">Begin</th><th class="n">Inkomsten</th><th class="n">Uitgaven (gemiddeld)</th><th class="n">Vaste lasten t.o.v. nu</th><th class="n">Inleg vastgezet</th><th class="n">Momenten</th><th class="n">Eind</th></tr>${rows.map(r=>{ const ev=sum(r.events.map(e=>e.amt));
       return `<tr><td>${mLong(r.ym)}</td><td class="n">${E(r.begin)}</td><td class="n pos">${r.inc?'+'+E(r.inc):''}</td><td class="n neg">${r.expBase?'−'+E(r.expBase):''}</td><td class="n ${r.expFix>0?'neg':'pos'}">${Math.abs(r.expFix)>=1?(r.expFix>0?'−':'+')+E(Math.abs(r.expFix)):''}</td><td class="n neg">${r.inleg?'−'+E(r.inleg):''}</td><td class="n ${ev<0?'neg':'pos'}" title="${esc(r.events.map(e=>e.txt+': '+E(e.amt)).join(', '))}">${ev?(ev<0?'−':'+')+E(Math.abs(ev)):''}</td><td class="n"><b class="${r.end<0?'neg':''}">${E(r.end)}</b></td></tr>`; }).join('')}</table></div>
-    <p class="small muted" style="margin-top:6px"><b>Vaste lasten t.o.v. nu:</b> vaste posten die in een bepaalde maand meer of minder kosten dan gemiddeld, bijvoorbeeld een jaarlijkse verzekering of belasting (−), of een vaste last die is gestopt (+).</p>`:''}</div>`;
+`:''}</div>`;
 }
 /* Deposito: eerstvolgende rente-uitkering en verwacht saldo op de einddatum */
 function nextPayout(a){
@@ -1316,12 +1321,12 @@ function depositLine(a,cur){
   const lbl=np&&np.end?'Rente-uitkering op de einddatum':({week:'Wekelijkse',maand:'Maandelijkse',kwartaal:'Rente-uitkering per kwartaal',jaar:'Jaarlijkse'}[a.renteFreq]||'Jaarlijkse');
   const parts=[];
   if(np){ const days=Math.max(1,daysBetween(np.prev,np.date)); const amt=cur.value*rateAt(a,np.prev)/100*days/365;
-    const amt2=np.end?cur.value*(Math.pow(1+rateAt(a,np.prev)/100,Math.max(0,daysBetween(np.prev,np.date))/365)-1):amt;
+    const amt2=np.end?cur.value*rateAt(a,np.prev)/100*Math.max(0,daysBetween(np.prev,np.date))/365:amt;
     parts.push(np.end?`Rente op de einddatum (<b>${dNl(np.date)}</b>): <b>${E(amt2)}</b>`:`${a.renteFreq==='kwartaal'?lbl:lbl+' rente-uitkering'} op <b>${dNl(np.date)}</b>: <b>${E(amt2)}</b>`); }
   else parts.push(`Vul bij Bewerken de datum van de rente-uitkering in om de eerstvolgende uitkering te zien`);
-  if(mt && mt.amount!=null) parts.push(`verwacht saldo op <b>${dNl(mt.date)}</b>: <b>${E(mt.amount)}</b>${mt.est?'':' (zelf ingevuld)'}`);
-  else if(np){ const amt=cur.value*rateAt(a,np.prev)/100*Math.max(1,daysBetween(np.prev,np.date))/365; parts.push(`verwacht saldo op <b>${dNl(np.date)}</b>: <b>${E(cur.value+amt)}</b>`); }
-  return `<div class="small muted" style="margin-top:8px">${parts.join(' · ')}</div>`;
+  if(mt && mt.amount!=null) parts.push(`komt vrij op <b>${dNl(mt.date)}</b>: <b>${E(mt.amount)}</b>${a.endAmount?' (zelf ingevuld)':''}`);
+
+  return `<div class="small muted" style="margin-top:8px">${parts.join(' · ')}<div>De rente wordt bijgeschreven op je betaalrekening (geen rente op rente).</div></div>`;
 }
 function vRekeningen(){
   const st=monthStatus(curYm());
@@ -1744,10 +1749,7 @@ function vVast(){
   const tbl=k=>{ const rs=S.recurring.filter(r=>r.kind===k).sort((a,b)=>a.cat.localeCompare(b.cat)||(a.start<b.start?-1:1)); return rs.length?`<div class="tablewrap"><table><tr><th>Omschrijving</th><th>Categorie</th><th>Persoon</th><th class="n">Bedrag</th><th>Frequentie</th><th>Vanaf</th><th>Tot en met</th><th>Dag</th><th></th></tr>${rs.map(row).join('')}</table></div>`:'<p class="muted">Nog niets vastgelegd.</p>'; };
   const ev=calendarEvents();
   return `<h1>Vaste posten</h1><p class="sub">Vaste lasten die elke maand, elk kwartaal of elk jaar terugkomen.</p>${demoBanner()}
-  <div class="info"><b>Waarvoor is dit?</b> Je vaste lasten zitten al in je werkelijke uitgaven bij Invoeren, en daarmee ook in de 30-jaarsplanning (het gemiddelde van de laatste 24 maanden). Je hoeft ze hier dus niet allemaal in te vullen.<br>
-  Gebruik deze pagina voor vaste lasten die <b>in de toekomst stoppen, beginnen of veranderen</b>, bijvoorbeeld een lening of lease met een einddatum, een premie die op een bepaalde leeftijd stopt, reiskosten die stoppen bij pensioen, of een nieuwe verzekering.<br>
-  <b>Wat doet het?</b> Stopt een vaste last, dan gaan je uitgaven in <b>30 jaar</b> en <b>Vrij geld</b> vanaf dat moment omlaag; begint er een, dan gaan ze omhoog. Vaste lasten die gewoon doorlopen veranderen niets aan de planning, er wordt dus niets dubbel geteld. Daarnaast zie je ze als verwachting bij <b>Maand</b>.<br>
-  <b>Inkomsten</b> beheer je op <a href="#inkomen">Inkomen plannen</a>; ze staan hieronder ook, maar het is dezelfde lijst.</div>
+
   <div class="card"><div class="row"><h2 style="margin:0">Vaste inkomsten</h2><span class="spacer"></span><button class="btn sm" data-a="addRec" data-k="in">+ Vaste inkomst</button></div><div style="margin-top:10px">${tbl('in')}</div></div>
   <div class="card"><div class="row"><h2 style="margin:0">Vaste lasten</h2><span class="spacer"></span><button class="btn sm" data-a="addRec" data-k="uit">+ Vaste last</button></div><div style="margin-top:10px">${tbl('uit')}</div></div>
   <div class="card"><h2>Kalender: wijzigingen en aflopende verplichtingen (komende 12 maanden)</h2><div class="cal">${ev.length?ev.map(e=>`<div class="ev"><div class="dt">${e.yearOnly?e.ym.slice(0,4):mName(e.ym)}</div><div style="flex:1">${esc(e.txt)} <span class="badge ${e.badge==='loopt af'?'w':''}">${esc(e.badge)}</span></div><div class="n ${e.kind==='in'?'pos':''}">${E2(e.amt)}</div></div>`).join(''):'<p class="muted">Geen wijzigingen in de komende 12 maanden.</p>'}</div></div>`;
@@ -1758,7 +1760,7 @@ function vInvesteringen(){
     return `<tr><td>${esc(a.note||'')}<div class="small muted">${esc(a.cat)}</div></td><td>${dNl(a.date)}</td><td class="n">${E2(a.amount)}</td><td class="n">${n} mnd</td><td class="n">${E2(per)}</td><td class="n">${E(per*done)}</td><td class="n">${E(a.amount-per*done)}</td><td>${done>=n?'<span class="badge g">afgeschreven</span>':done===0?'<span class="badge">start later</span>':`<span class="badge">${done}/${n}</span>`}</td><td class="n"><button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button></td></tr>`; }).join('');
   const thisM=sum(inv.map(a=>deprIn(a,curYm())));
   return `<div class="row"><div><h1>Investeringen en afschrijving</h1><p class="sub">Uitgaven boven <b>${E(S.settings.threshold)}</b> (grensbedrag, instelbaar) worden investeringen${S.settings.noInvCats.length?`, behalve in ${S.settings.noInvCats.map(esc).join(', ')}`:''}. Afschrijving deze maand: <b>${E2(thisM)}</b>.</p></div><span class="spacer"></span><button class="btn" data-a="addAct" data-k="uit">+ Investering / uitgave</button></div>${demoBanner()}
-  <div class="info">De <b>betaling</b> is een geldbeweging: die zie je terug in je rekeningsaldi. De <b>afschrijving</b> verdeelt de kosten in gelijke delen over de maanden, vanaf de maand van betaling, en is geen nieuwe betaling. In het uitgavenoverzicht telt alleen de afschrijving mee, zodat niets dubbel wordt geteld.</div>
+
   <div class="card">${inv.length?`<div class="tablewrap"><table><tr><th>Omschrijving</th><th>Betaald op</th><th class="n">Bedrag</th><th class="n">Termijn</th><th class="n">Per maand</th><th class="n">Afgeschreven</th><th class="n">Resterend</th><th>Status</th><th></th></tr>${rows}</table></div>`:'<p class="muted">Nog geen investeringen.</p>'}</div>`;
 }
 
@@ -1783,20 +1785,20 @@ function expRendCard(){
   const badge=a=>rendSure(a)?'<span class="badge g">zeker</span>':(hasRate(a)||TYPES[a.type].waarde)?'<span class="badge">verwacht</span>':'';
   const ordered=[...accs.filter(rendSure),...accs.filter(a=>!rendSure(a))];
   const rows=ordered.map(a=>`<tr><td>${esc(a.name)} ${badge(a)}<div class="small muted">${accInfo(a)}</div></td>${yrs.map((y,i)=>{ const v=per[a.id]?per[a.id][i]:0; return `<td class="n">${v>=1?E(v)+pc(v,startBal(a,y)):'<span class="muted">–</span>'}</td>`; }).join('')}<td class="n">${TYPES[a.type].waarde||a.type==='deposito'||hasRate(a)?`<button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Instellen</button>`:''}</td></tr>`).join('');
-  return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Per rekening in euro's, met daaronder het percentage ten opzichte van het saldo op 1 januari van dat jaar. ${cy} telt vanaf volgende maand. <span class="badge g">zeker</span> = deposito's: vaste rente, op de uitkeringsdatum of de einddatum. <span class="badge">verwacht</span> = spaarrekeningen (variabele rente), beleggingen, goud en crypto: een verwachting op basis van het percentage dat je instelt. Rente en rendement worden bij het saldo opgeteld (rente op rente).</p>
+  return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Bedrag per jaar, met het percentage t.o.v. het saldo op 1 januari. <span class="badge g">zeker</span> vaste rente · <span class="badge">verwacht</span> schatting.</p>
     <div class="tablewrap"><table><tr><th>Rekening</th>${yrs.map(y=>`<th class="n">${y}${y===cy?' (rest)':''}</th>`).join('')}<th></th></tr>${rows}
     <tr><td><span class="badge g">zeker</span> deposito's</td>${sure.map(v=>`<td class="n">${v>=1?E(v):'–'}</td>`).join('')}<td></td></tr>
     <tr><td><span class="badge">verwacht</span> overige</td>${exp.map(v=>`<td class="n">${v>=1?E(v):'–'}</td>`).join('')}<td></td></tr>
     <tr class="tot"><td>Totaal<div class="small muted" style="font-weight:400">% t.o.v. het vermogen op 1 januari</div></td>${tot.map((v,i)=>`<td class="n">${E(v)}<div class="small muted" style="font-weight:400">${vermStart[i]?P(v/vermStart[i]):''}</div></td>`).join('')}<td></td></tr>
     <tr><td class="small muted">Vermogen op 1 januari</td>${vermStart.map((v,i)=>`<td class="n small muted">${E(v)}${i===0?' <span title="werkelijk">(werkelijk)</span>':''}</td>`).join('')}<td></td></tr></table></div>
-    <p class="small muted" style="margin-top:6px">Vermogen op 1 januari: voor ${cy} het werkelijke saldo per 31 december (rekeningen die later zijn geopend tellen niet mee). Voor latere jaren de saldi met hun verwachte rente/rendement, zonder nieuwe inleg of opnames. Het geld van een afgelopen deposito blijft daarna meetellen (zonder rente), omdat het naar een andere rekening gaat.</p></div>`;
+</div>`;
 }
 function vRendement(){
   const years=[...new Set(S.meas.map(m=>+m.date.slice(0,4)).concat(S.histRend.map(h=>+h.year)))].sort(); if(!years.includes(curY())) years.push(curY());
   const ys=years.slice(-6);
   const cell=r=>r?`${P(r.pct)}${r.manual?' <span class="badge">handmatig</span>':r.received?(r.partial?' <span class="badge g">ontvangen tot nu</span>':' <span class="badge g">ontvangen</span>'):r.expected?' <span class="badge">verwacht</span>':r.calc?' <span class="badge">berekend</span>':r.partial?' <span class="badge w">tot nu</span>':''}${r.eur!=null?`<div class="small muted">${E(r.eur)}</div>`:''}`:'<span class="muted">–</span>';
   return `<div class="row"><div><h1>Rendement</h1><p class="sub">Per rekening en voor het totale vermogen.</p></div><span class="spacer"></span><button class="btn" data-a="addHR">+ Rendement handmatig</button></div>${demoBanner()}
-  <div class="info"><b>Zo rekent de app:</b> bij rekeningen met rente telt eerst de rente die je echt hebt ontvangen. Zonder ontvangen rente schat de app: elk ingevoerd saldo geldt tot de volgende meting en elk rentepercentage tot de volgende wijziging, net als bij de bank per dag. Voor de rest van het lopende jaar rekent de app met het laatste saldo. Het percentage is de rente gedeeld door het gemiddelde saldo. Bij goud, crypto en beleggingen is het de waardestijging tussen het begin en het eind van het jaar, gecorrigeerd voor aan- en verkopen. Bijgestort geld telt dus niet als winst. Het totaal is de som van het rendement in euro's, gedeeld door het vermogen waarover dat rendement is behaald.</div>
+
   ${expRendCard()}
   <div class="card"><h2>Rendement tot nu, per jaar</h2><div class="tablewrap"><table><tr><th>Rekening</th>${ys.map(y=>`<th class="n">${y}</th>`).join('')}</tr>
     ${S.accounts.map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
@@ -1837,7 +1839,7 @@ function vPrognose(){
   const people=[...new Set(pr.rows.flatMap(r=>Object.keys(r.incByPerson)))];
   const low=pr.rows.find(r=>r.end<0);
   return `<div class="row"><div><h1>Langetermijnplanning: 30 jaar</h1><p class="sub">Een berekening op basis van jullie eigen invoer. Geen garantie en geen beleggingsadvies.</p></div><span class="spacer"></span><div class="toggle"><button data-a="real" data-v="0" class="${real?'':'on'}">Nominale euro's</button><button data-a="real" data-v="1" class="${real?'on':''}">Euro's van nu</button></div></div>${demoBanner()}
-  <div class="info"><b>Uitgangspunten:</b> start met het huidige bekende vermogen (${E(pr.start.total)}${pr.start.missing.length?', <b>onvolledig</b>':''}). ${pr.rest.months?`Voor de rest van ${curY()} (${pr.rest.months} maand${pr.rest.months===1?'':'en'}) tellen de verwachte inkomsten (${E(pr.rest.inc)}), uitgaven (${E(pr.rest.exp)}) en rendement (${E(pr.rest.ret)}) mee, dus op 1 januari ${curY()+1} is het verwachte vermogen ${E(pr.rest.end)}.`:`Op 1 januari ${curY()+1} is het verwachte vermogen ${E(pr.rest.end)}.`} Uitgaven: ${pr.base.source==='werkelijk'?`gemiddelde van de werkelijke uitgaven over ${pr.base.n} maand${pr.base.n===1?'':'en'} binnen de laatste 24 maanden`:'<b>nog geen werkelijke uitgaven</b>, dus de verwachte vaste lasten'}: ${E(pr.baseM)} per maand, zonder afschrijving. Vaste lasten die volgens Vaste posten in de toekomst stoppen of beginnen (bijv. een hypotheek die is afgelost), worden vanaf dat moment van dit gemiddelde afgetrokken of erbij opgeteld. Grote uitgaven komen uit de investeringen en losse uitgaven die je met een datum in de toekomst hebt ingevoerd; die tellen volledig mee in het jaar van betaling. Inkomsten: de verwachte inkomsten uit Vaste posten en uit je eigen verwachtingen bij Invoeren, verhoogd met de inkomensgroei (bedragen gelden als euro's van nu). Rendement over het vermogen aan het begin van elk jaar, min ${numIn(S.settings.box3)}% vermogensbelasting.</div>
+  <p class="small muted" style="margin:-6px 0 12px">Start: verwacht vermogen op 1 januari ${curY()+1} ${E(pr.rest.end)}${pr.start.missing.length?' (<b>onvolledig</b>)':''} · uitgaven ${E(pr.baseM)} per maand ${pr.base.source==='werkelijk'?`(gemiddelde van ${pr.base.n} maanden)`:'(verwachte vaste lasten)'} · rendement ${numIn(S.settings.rend)}%${S.settings.box3?' min '+numIn(S.settings.box3)+'% box 3':''}. Klik op <b>?</b> bij de titel voor de uitleg.</p>
   ${low?`<div class="warn">Volgens deze berekening wordt het vermogen in <b>${low.y}</b> negatief.</div>`:''}
   <div class="card"><h2>Verwacht vermogen${real?' (euro\'s van nu)':''}</h2>${comboChart({labels:['Nu',...labels],line:{name:'Vermogen eind van het jaar',values:[pr.start.total,...pr.rows.map(r=>R(r.end,r))],color:'#1d5fbf'},bars:[{name:'Inkomsten per jaar',values:[0,...pr.rows.map(r=>R(r.inc,r))],color:'#93b8ea'},{name:'Uitgaven per jaar',values:[0,...pr.rows.map(r=>R(r.exp,r))],color:'#e89a6a'}]})}<p class="small muted" style="margin-top:6px">Het eerste punt is het vermogen van nu. Elk volgend punt is het vermogen aan het eind van dat jaar: vermogen aan het begin + rendement + inkomsten − uitgaven. Daalt het vermogen in een jaar niet terwijl je meer uitgeeft dan je verdient, dan maakt het rendement het verschil goed.</p></div>
   <div class="card"><div class="row"><h2 style="margin:0">Verwachte netto-inkomsten per maand, per persoon${real?' (euro\'s van nu)':''}</h2><span class="spacer"></span>
@@ -1955,11 +1957,79 @@ function vInstellingen(){
   </div>`;
 }
 
+
+/* ============ Uitleg per pagina (vraagteken bij de titel) ============ */
+const HELP={
+ overzicht:['Overzicht',`<p>De stand van zaken van vandaag: je vermogen, wat direct beschikbaar is, en wat er de komende maanden aankomt.</p>
+  <p><b>Vermogen</b> = de som van de laatst ingevoerde saldi van al je rekeningen. <b>Direct beschikbaar</b> = alleen rekeningen met het vinkje "direct beschikbaar".</p>
+  <p><i>Voorbeeld:</i> betaalrekening €5.000 + spaarrekening €40.000 + deposito €20.000 = vermogen €65.000, waarvan €45.000 direct beschikbaar.</p>`],
+ rekeningen:['Rekeningen',`<p>Al je rekeningen en bezittingen met het laatst bekende saldo. Links de gewone rekeningen, rechts de deposito's.</p>
+  <p><b>Saldo invoeren:</b> het saldo op een peildatum. Het actuele saldo is altijd de meting met de nieuwste peildatum.</p>
+  <p><b>Spaarrekening:</b> verwachte rente = saldo × rentepercentage, met rente op rente. <i>Voorbeeld:</i> €56.883 × 3,11% ≈ €1.770 per jaar; met wekelijkse uitkering iets meer (≈ €1.795).</p>
+  <p><b>Deposito:</b> de rente gaat naar je betaalrekening (geen rente op rente). Met een uitkeringsdatum komt de rente op die datums; zonder uitkeringsdatum in één keer op de einddatum. De einddatum vult de app zelf in uit de looptijd in de naam ("Deposito 3 jaar") en de openingsdatum, of je vult hem zelf in. <i>Voorbeeld:</i> €50.000 × 2,45% = €1.225 per jaar.</p>
+  <p><b>Goud:</b> gewicht in gram × goudprijs per gram × percentage. <i>Voorbeeld:</i> 62,2 g × €112,50 × 95% = €6.647.</p>`],
+ kort:['Komende maanden',`<p>Je vermogen per maand. Grijze kolommen zijn <b>werkelijk</b> (uit Invoeren en je saldi), witte kolommen zijn de <b>verwachting</b>. Scroll de tabel onbeperkt naar links of rechts.</p>
+  <p><b>Per maand:</b> vermogen begin + inkomsten + incidentele inkomsten − uitgaven − incidentele uitgaven − investeringen ± rendement = vermogen eind.</p>
+  <ul><li><b>Inkomsten:</b> volgens Inkomen plannen (of het gemiddelde van de laatste 12 maanden, met de knop).</li>
+  <li><b>Uitgaven:</b> gemiddelde van je werkelijke uitgaven over de laatste 12 maanden, zonder investeringen en zonder afschrijving.</li>
+  <li><b>Incidenteel:</b> eenmalige bedragen bij Inkomen plannen, verwachtingen bij Invoeren, en losse uitgaven met een datum in de toekomst.</li>
+  <li><b>Investeringen:</b> volledig in de maand van betaling.</li>
+  <li><b>Rendement:</b> per rekening (zie Rendement). Bij werkelijke maanden het verschil tussen je saldi en de ingevoerde bedragen.</li>
+  <li><b>Vrij opneembaar:</b> rekeningen met "direct beschikbaar", plus deposito's op hun einddatum en deposito-rente op de uitkeringsdatum.</li></ul>
+  <p><i>Voorbeeld:</i> begin €76.000 + €5.500 inkomsten − €3.700 uitgaven − €6.000 warmtepomp + €90 rente = eind €71.890.</p>`],
+ vrij:['Vrij geld',`<p>Hoeveel geld je op elk moment vrij kunt opnemen, zodat je bijvoorbeeld een auto kunt plannen op een moment dat er genoeg vrij is.</p>
+  <p><b>Per maand:</b> vrij tegoed begin + inkomsten − gemiddelde uitgaven − inleg op vastgezette rekeningen + deposito's die vrijkomen + deposito-rente − aankopen = eind.</p>
+  <p>Met het vinkje <b>Inkomsten en uitgaven meetellen</b> uit zie je alleen wat de deposito's en geplande aankopen doen.</p>
+  <p><i>Voorbeeld:</i> nu €44.000 vrij; in april komt een deposito van €50.000 vrij (+ €1.225 rente) → €95.225; in juni een auto van €35.000 → €60.225.</p>
+  <p>Na de einddatum van een deposito: zet het geld in de app over naar je spaar- of betaalrekening (nieuw saldo invoeren) en zet de deposito op nul.</p>`],
+ inkomen:['Inkomen plannen',`<p>Eén plek voor al je toekomstige netto inkomsten. Vul per persoon elk inkomen in met het bedrag per maand, <b>vanaf</b> en <b>tot en met</b> wanneer.</p>
+  <ul><li>Salaris tot en met de maand dat iemand stopt met werken.</li><li>Pensioen en AOW vanaf de maand dat ze ingaan.</li><li><b>Eenmalig bedrag:</b> telt alleen in die ene maand (kies als soort "Overig").</li></ul>
+  <p>Dit telt mee in Maand, Komende maanden, Vrij geld en 30 jaar. Bedragen zijn in euro's van nu; in de 30-jaarsplanning komt de inkomensgroei erbij.</p>
+  <p>Wat je <b>echt ontvangen</b> hebt, vul je in bij Invoeren (Werkelijk). Staan er bij Invoeren nog verwachtingen voor de toekomst, dan gaan die vóór; wis ze met de knop als je alles hier wilt regelen.</p>`],
+ invoer:['Invoeren',`<p>Hier vul je je <b>werkelijke</b> inkomsten en uitgaven in, per maand of in het jaaroverzicht.</p>
+  <ul><li>Per categorie het totaal, of de subcategorieën afzonderlijk (dan berekent de app het totaal).</li><li>Uitgaven boven het grensbedrag (standaard €500) worden een <b>investering</b> en worden afgeschreven, tenzij de categorie op "nooit een investering" staat.</li>
+  <li>Het vinkje <b>Wijziging geldt ook voor alle maanden hierna</b> (bij Verwachting) overschrijft latere maanden; zet het uit als je één maand wilt aanpassen.</li></ul>`],
+ maand:['Maand',`<p>Eén maand in detail: verwachte en werkelijke bedragen naast elkaar. Ze worden nooit bij elkaar opgeteld.</p><p>Verwacht komt uit Inkomen plannen, Vaste posten en verwachtingen; werkelijk uit Invoeren. Afschrijving van investeringen staat als aparte categorie.</p>`],
+ analyse:['Analyse',`<p>Waar het geld naartoe gaat en waar het vandaan komt, op basis van je werkelijke bedragen.</p>
+  <ul><li><b>Per jaar:</b> klik op een staaf om dat jaar te kiezen.</li><li><b>Taartdiagram:</b> klik op een categorie voor de subcategorieën; bij Afschrijving zie je de investeringen.</li><li><b>Jaren vergelijken:</b> vink jaren aan om categorieën of subcategorieën naast elkaar te zetten.</li></ul>
+  <p>Het lopende jaar telt tot en met de huidige maand.</p>`],
+ vast:['Vaste posten',`<p>Je vaste lasten zitten al in je werkelijke uitgaven, en daarmee in de planning (gemiddelde van de laatste 24 maanden). Je hoeft ze hier niet allemaal in te vullen.</p>
+  <p>Gebruik deze pagina voor vaste lasten die <b>in de toekomst stoppen, beginnen of veranderen</b>: een lening of lease met einddatum, een premie die op een leeftijd stopt, reiskosten die stoppen bij pensioen, een nieuwe verzekering.</p>
+  <p><b>Berekening:</b> de app kijkt alleen naar het <b>verschil met nu</b>. <i>Voorbeeld:</i> uitgaven €3.000 per maand inclusief €1.000 hypotheek die eind 2030 stopt → tot 2030 €3.000, vanaf 2031 €2.000 per maand (plus inflatie). Een vaste last die gewoon doorloopt verandert niets, dus er telt niets dubbel.</p>
+  <p>Inkomsten beheer je op Inkomen plannen; het is dezelfde lijst.</p>`],
+ investeringen:['Investeringen',`<p>Grote aankopen boven het grensbedrag. De <b>betaling</b> zie je terug in je saldi; de <b>afschrijving</b> verdeelt de kosten over de maanden.</p>
+  <p><i>Voorbeeld:</i> een vloer van €15.000 over 15 jaar = €83 per maand afschrijving in het maandoverzicht en bij Analyse.</p>
+  <p><b>Toekomstige aankoop:</b> vul de datum en het verwachte bedrag in. In de 30-jaarsplanning, Komende maanden en Vrij geld telt die volledig mee in de maand van betaling (zonder afschrijving).</p>
+  <p><b>Herhalen:</b> bijvoorbeeld elke 8 jaar een auto, met een prijsstijging per jaar. Pas je een herhaling aan, dan worden de latere opnieuw berekend.</p>`],
+ rendement:['Rendement',`<p><b>Verwacht rendement komende jaren</b>, per rekening:</p>
+  <ul><li><span class="badge g">zeker</span> <b>Deposito's:</b> vaste rente op de uitkeringsdatum of de einddatum; de rente gaat naar je betaalrekening (geen rente op rente). <i>Voorbeeld:</i> €6.000 × 2,5% over 2 jaar = €300, alleen in het jaar van de einddatum.</li>
+  <li><span class="badge">verwacht</span> <b>Spaarrekeningen:</b> het ingestelde (variabele) rentepercentage, met rente op rente.</li>
+  <li><span class="badge">verwacht</span> <b>Goud, aandelen, crypto:</b> het verwachte rendement dat je per rekening instelt (Bewerken).</li></ul>
+  <p><b>Percentage:</b> rendement in een jaar ÷ saldo op 1 januari van dat jaar. Voor dit jaar is dat het werkelijke saldo per 31 december.</p>
+  <p><b>Rendement tot nu:</b> bij rekeningen met rente telt eerst de rente die je echt hebt ontvangen; anders een schatting op basis van saldi en rente. Bij goud en beleggingen: waardestijging min bijgestorte bedragen.</p>`],
+ prognose:['30 jaar',`<p>Een berekening van je vermogen over 30 jaar. Geen garantie en geen beleggingsadvies.</p>
+  <p><b>Per jaar:</b> vermogen begin + rendement + inkomsten − uitgaven = vermogen eind.</p>
+  <ul><li><b>Start:</b> je vermogen van vandaag, plus de verwachte inkomsten en uitgaven in de rest van dit jaar.</li>
+  <li><b>Inkomsten:</b> volgens Inkomen plannen, met de inkomensgroei erbij; salaris stopt op de stopdatum uit Instellingen.</li>
+  <li><b>Uitgaven:</b> gemiddelde van de werkelijke uitgaven over de laatste 24 maanden, met inflatie, plus wijzigingen in vaste lasten (Vaste posten), plus toekomstige aankopen in het jaar van betaling.</li>
+  <li><b>Rendement:</b> het percentage uit Instellingen (of per jaar in de tabel) over het vermogen aan het begin van het jaar.</li>
+  <li><b>Euro's van nu:</b> corrigeert alles voor inflatie. Inkomen dat minder groeit dan de inflatie daalt dan; uitgaven blijven gelijk.</li></ul>
+  <p><i>Voorbeeld:</i> €300.000 begin + 4% rendement (€12.000) + €60.000 inkomsten − €70.000 uitgaven (incl. een auto) = €302.000: het vermogen stijgt toch, omdat het rendement het tekort goedmaakt.</p>`],
+ instellingen:['Instellingen',`<p>Categorieën, standaardaannames (inflatie, rendement, inkomensgroei, grensbedrag investeringen), personen met geboortedatum en stopdatum, en je gegevens (back-up).</p>
+  <p><b>Back-up kopiëren/downloaden</b> maakt een kopie van al je gegevens; met <b>Back-up plakken/terugzetten</b> zet je die terug.</p>`]
+};
+function helpModal(){
+  const h=HELP[view]; if(!h) return;
+  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal helpm"><h3>${esc(h[0])} – uitleg</h3><div class="helptxt">${h[1]}</div><div class="actions"><button class="btn" id="hClose">Sluiten</button></div></div></div>`;
+  $('#hClose').onclick=closeModal; $('#ov').addEventListener('mousedown',e=>{ if(e.target.id==='ov') closeModal(); });
+}
+function addHelpBtn(){ const h1=document.querySelector('#main h1'); if(h1 && HELP[view] && !h1.querySelector('.helpbtn')) h1.insertAdjacentHTML('beforeend',' <button class="helpbtn" data-a="help" title="Uitleg bij deze pagina" aria-label="Uitleg">?</button>'); }
 function render(){
   view=(location.hash.slice(1)||'overzicht'); if(!VIEWS.some(v=>v[0]===view)) view='overzicht';
   renderNav();
   const fn={kort:vKort,inkomen:vInkomen,vrij:vVrij,analyse:vAnalyse,invoer:vInvoer,overzicht:vOverzicht,rekeningen:vRekeningen,maand:vMaand,vast:vVast,investeringen:vInvesteringen,rendement:vRendement,prognose:vPrognose,instellingen:vInstellingen}[view];
   $('#main').innerHTML=fn();
+  addHelpBtn();
   if(view==='kort') kortAfter(true);
 }
 
@@ -2027,6 +2097,7 @@ document.addEventListener('click',e=>{
     case 'editExp': expectedForm(S.expected.find(z=>z.id===id)); break;
     case 'delExp': del('expected','Deze verwachting wordt verwijderd.'); break;
     case 'addRec': recurringForm(k); break;
+    case 'help': helpModal(); break;
     case 'kortOff': kortOff=(+b.dataset.d===0)?0:kortOff+(+b.dataset.d); keepScroll(); break;
     case 'kortInc': kortInc=b.dataset.v; keepScroll(); break;
     case 'incOnce': onceForm(b.dataset.p||''); break;
