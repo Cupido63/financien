@@ -171,7 +171,7 @@ tr.ysum td,tr.ysum th{background:var(--b100)!important;border-bottom:2px solid v
 .acard .row{margin-top:8px!important;gap:4px}.acard .btn.sm{padding:4px 8px;font-size:12.5px}
 .acard .badge{font-size:10.5px;padding:1px 6px}
 @media (max-width:900px){ .accgrid{grid-template-columns:minmax(0,1fr)} }
-.ktab th,.ktab td{white-space:nowrap}.ktab th.kpast{background:#eef1f5;color:#5a6b85}.ktab th.yname{min-width:200px;max-width:none}.ktab td.n{padding:6px 8px;font-size:13px}
+.ktab th,.ktab td{white-space:nowrap}.ktab th.kpast{background:#eef1f5;color:#5a6b85}.ktab th.yname{min-width:200px;max-width:none}.ktab{width:auto;min-width:0}.ktab td.n,.ktab thead th{min-width:86px}.ktab td.n{padding:6px 8px;font-size:13px}
 </style>
 </head>
 <body>
@@ -766,6 +766,7 @@ function accountForm(a){
     {k:'inleg',label:'Verwachte inleg per maand (€, optioneel)',type:'num',show:o=>TYPES[o.type].rente,help:'Alleen voor de vooruitblik. Een inleg is een overboeking binnen je vermogen, geen uitgave.'},
     {k:'gram',label:'Gewicht in gram (24 karaat)',type:'num',ph:'Bijv. 62,2',show:o=>o.type==='goud',help:'Dan berekent de app de waarde zelf uit de goudprijs: gewicht × goudprijs × percentage.'},
     {k:'goldPct',label:'Percentage van de goudprijs (%)',type:'num',ph:'Bijv. 95',show:o=>o.type==='goud',help:'Bijv. 95 als je bij verkoop 95% van de goudprijs krijgt. Leeg = 100%.'},
+    {k:'expRend',label:'Verwacht rendement per jaar (%)',type:'num',ph:'Bijv. 5',show:o=>TYPES[o.type].waarde,help:'Voor goud, aandelen of crypto: het rendement dat je de komende jaren verwacht. Wordt gebruikt bij Komende maanden en Rendement. Leeg = 0%.'},
     {k:'besch',label:'Direct beschikbaar (telt mee als vrij besteedbaar geld)',type:'cb'},
     {k:'start',label:'Geopend op (optioneel)',type:'date',help:'Maanden vóór deze datum tellen niet als "onbekend".'},
     {k:'endDate',label:'Komt vrij op (einddatum)',type:'date',show:o=>!o.besch,help:'Voor een deposito of ander vastgezet geld: de datum waarop het geld vrij opneembaar wordt. Wordt gebruikt in het overzicht "Vrij geld".'},
@@ -1092,11 +1093,37 @@ function actualMonthRow(ym){
   const begin=sb.total, end=se.total, ret=end-begin-inc-sI+exp+sE+sV;
   return {ym,past:true,begin,inc,exp,incI:L(incN),expI:L(expN),inv:L(invs),sI,sE,sV,ret,end,vrij:se.besch,known:se.known};
 }
-function kortPlan(){
-  const c=ymI(curYm()), today=todayStr(), H=Math.max(0,kortOff+12), st=monthStatus(curYm());
+
+/* ===== Verwacht rendement per rekening, per maand (vanaf volgende maand) =====
+   Goud/aandelen/crypto: ingesteld verwacht rendement. Spaarrekeningen: ingestelde rente (ook toekomstige rentewijzigingen).
+   Deposito's: rente op de uitkeringsdatums, tot de einddatum. Rente en rendement worden bij het saldo opgeteld (rente op rente). */
+function payoutMonths(a,fromYm,toYm){
+  const step={maand:1,kwartaal:3,jaar:12,week:1}[a.renteFreq]||12, set=new Map();
+  let d=isDate(a.renteDag)?a.renteDag:(endDateOf(a)||null); if(!d) return {set,step};
+  let n=0; while(d.slice(0,7)>fromYm && n++<600) d=monthsAdd(d,-step);
+  n=0; while(d.slice(0,7)<=toYm && n++<1200){ if(d.slice(0,7)>=fromYm) set.set(d.slice(0,7),d); d=monthsAdd(d,step); }
+  return {set,step};
+}
+function expReturnSim(months){
+  const c=ymI(curYm()), from=iYm(c+1), to=iYm(c+months), out=Array.from({length:months},()=>({total:0,byAcc:[]}));
+  for(const a of S.accounts){
+    const cur=currentOf(a.id); if(!cur) continue; let v=cur.value; const t=TYPES[a.type];
+    const end=endDateOf(a), pm=a.type==='deposito'?payoutMonths(a,from,to):null;
+    for(let k=1;k<=months;k++){ const ym=iYm(c+k); let amt=0;
+      if(t.waarde){ amt=v*((+a.expRend||0)/100)/12; }
+      else if(a.type==='deposito' && hasRate(a)){ if(end && ym>end.slice(0,7)) break; if(pm.set.has(ym)) amt=v*rateAt(a,ym+'-01')/100*pm.step/12; }
+      else if(hasRate(a)){ amt=v*rateAt(a,ym+'-01')/100/12; }
+      if(amt){ v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name,amt}); }
+    }
+  }
+  return out;
+}
+function kortPlan(off=kortOff,count=12){
+  const c=ymI(curYm()), today=todayStr(), H=Math.max(0,off+count), st=monthStatus(curYm());
   const hi=histAvg('in'), hu=histAvg('uit');
   const mats=S.accounts.map(maturityOf).filter(m=>m&&m.amount!=null&&m.date>today);
   const inlegNB=sum(S.accounts.filter(a=>!a.besch&&+a.inleg>0&&(!a.endDate||a.endDate>today)).map(a=>+a.inleg));
+  const sim=expReturnSim(Math.max(1,H));
   let v=st.total, vr=st.besch; const rows=[];
   for(let k=1;k<=H;k++){
     const ym=iYm(c+k), inFirst=d=> k===1 ? (d>today && d.slice(0,7)<=ym) : d.slice(0,7)===ym;
@@ -1114,15 +1141,15 @@ function kortPlan(){
     for(const a of S.actuals) if(a.kind==='uit' && !a.grid && a.monthTotal==null && inFirst(a.date)) (isInv(a)?inv:expI).push({txt:a.note||a.cat,amt:+a.amount});
     for(const a of S.actuals) if(a.kind==='in' && !a.grid && inFirst(a.date)) incI.push({txt:a.note||a.cat,amt:+a.amount});
     const sI=sum(incI.map(x=>x.amt)), sE=sum(expI.map(x=>x.amt)), sV=sum(inv.map(x=>x.amt));
-    const ret=v*(yp(+ym.slice(0,4)).rend-S.settings.box3)/100/12;
+    const ret=sim[k-1]?sim[k-1].total:0, retL=sim[k-1]?sim[k-1].byAcc:[];
     const begin=v; v=v+inc-exp+sI-sE-sV+ret;
     const mat=sum(mats.filter(m=>inFirst(m.date)).map(m=>m.amount));
     vr=vr+inc-exp+sI-sE-sV-inlegNB+mat;
-    rows.push({ym,begin,inc,exp,incI,expI,inv,sI,sE,sV,ret,end:v,vrij:vr});
+    rows.push({ym,begin,inc,exp,incI,expI,inv,sI,sE,sV,ret,retL,end:v,vrij:vr});
   }
   // venster: 12 maanden vanaf (volgende maand + kortOff); maanden t/m nu zijn werkelijke cijfers
   const out=[];
-  for(let j=0;j<12;j++){ const idx=c+1+kortOff+j;
+  for(let j=0;j<count;j++){ const idx=c+1+off+j;
     if(idx>c) out.push(rows[idx-c-1]);
     else out.push(actualMonthRow(iYm(idx))); }
   return {rows:out, start:st, hi, hu};
@@ -1141,6 +1168,35 @@ function flowBars(rows){
   const leg=[...IN.map((t,j)=>`<span><i style="background:${IC[j]}"></i>${t}</span>`),...ON.map((t,j)=>`<span><i style="background:${OC[j]}"></i>${t}</span>`)].join('');
   return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img">${g}</svg></div><div class="legend">${leg}</div>`;
 }
+
+/* Tabel per maand: onbeperkt horizontaal scrollen (verleden en toekomst) */
+let kTabFrom=-13, kTabN=37;
+function kortTableHtml(){
+  const rows=kortPlan(kTabFrom,kTabN).rows, cy_=curYm();
+  const tip=list=>esc(list.map(x=>x.txt+': '+E(x.amt)).join('\n'));
+  const cell=(v,sign,list)=>`<td class="n ${v&&sign<0?'neg':v&&sign>0?'pos':''}" ${list&&list.length?`title="${tip(list)}" style="cursor:help;text-decoration:underline dotted"`:''}>${v?(sign<0?'−':sign>0?'+':'')+E(Math.abs(v)):''}</td>`;
+  const tr=(label,fn,cls='')=>`<tr class="${cls}"><th class="yname">${label}</th>${rows.map(fn).join('')}</tr>`;
+  return `<table class="ytab ktab"><thead><tr><th class="yname"></th>${rows.map(r=>`<th class="${r.past?'kpast':''}${r.ym===cy_?' ynow':''}">${MN[+r.ym.slice(5)-1]} ${r.ym.slice(2,4)}<div class="small" style="font-weight:400;text-transform:none;letter-spacing:0">${r.past?(r.ym===cy_?'tot nu':'werkelijk'):'verwacht'}</div></th>`).join('')}</tr></thead><tbody>
+    ${tr('Vermogen begin',r=>`<td class="n">${E(r.begin)}</td>`)}
+    ${tr('+ Inkomsten',r=>cell(r.inc,1))}
+    ${tr('+ Incidentele inkomsten',r=>cell(r.sI,1,r.incI))}
+    ${tr('− Uitgaven',r=>cell(r.exp,-1))}
+    ${tr('− Incidentele uitgaven',r=>cell(r.sE,-1,r.expI))}
+    ${tr('− Investeringen',r=>cell(r.sV,-1,r.inv))}
+    ${tr('± Rendement / rente',r=>r.past?`<td class="n ${r.ret<0?'neg':r.ret>0?'pos':''}" title="Werkelijke maand: het verschil tussen de saldi en de ingevoerde bedragen (rente, koersen, niet ingevoerde posten)">${Math.abs(r.ret)>=1?(r.ret<0?'−':'+')+E(Math.abs(r.ret)):''}</td>`:cell(r.ret,1,r.retL))}
+    ${tr('<b>Vermogen eind</b>',r=>`<td class="n"><b class="${r.end<0?'neg':''}">${E(r.end)}</b></td>`,'gtot')}
+    ${tr('Waarvan vrij opneembaar',r=>`<td class="n ${r.vrij!=null&&r.vrij<0?'neg':''}">${r.vrij!=null?E(r.vrij):''}</td>`)}
+    </tbody></table>`;
+}
+function kortAfter(first){
+  const w=document.getElementById('kortWrap'); if(!w) return;
+  if(first){ const th=w.querySelector('th.ynow')||w.querySelector('thead th:nth-child(2)'); if(th){ const nm=w.querySelector('th.yname'); w.scrollLeft=Math.max(0,th.offsetLeft-(nm?nm.offsetWidth:0)-8); } }
+  if(w._bound) return; w._bound=true;
+  let busy=false;
+  w.addEventListener('scroll',()=>{ if(busy) return;
+    if(w.scrollLeft<120){ busy=true; const before=w.scrollWidth; kTabFrom-=12; kTabN+=12; w.innerHTML=kortTableHtml(); w.scrollLeft+=w.scrollWidth-before; busy=false; }
+    else if(w.scrollLeft+w.clientWidth>w.scrollWidth-120){ busy=true; kTabN+=12; const sl=w.scrollLeft; w.innerHTML=kortTableHtml(); w.scrollLeft=sl; busy=false; } },{passive:true});
+}
 function vKort(){
   const pl=kortPlan(), rows=pl.rows, first=rows[0], last=rows[rows.length-1];
   const tip=list=>esc(list.map(x=>x.txt+': '+E(x.amt)).join('\n'));
@@ -1153,23 +1209,14 @@ function vKort(){
     {name:'Waarvan vrij opneembaar',values:rows.map(r=>r.vrij),color:'#93b8ea'}],h:240});
   const evList=rows.flatMap(r=>[...r.incI.map(x=>({ym:r.ym,t:'in',...x})),...r.expI.map(x=>({ym:r.ym,t:'uit',...x})),...r.inv.map(x=>({ym:r.ym,t:'inv',...x}))]);
   return `<div class="row"><div><h1>Komende maanden</h1><p class="sub">Je vermogen per maand, met inkomsten, uitgaven, incidentele bedragen en investeringen. Blader onbeperkt vooruit (verwachting) en terug (werkelijke cijfers). Zonder afschrijving: investeringen tellen in de maand van betaling.</p></div></div>${demoBanner()}
+  <div class="card"><h2>Per maand</h2><p class="small muted"><b>Scroll de tabel naar links of rechts</b> om onbeperkt terug of vooruit te kijken; er worden vanzelf maanden bijgeladen. Beweeg over een onderstreept bedrag om te zien waar het uit bestaat. Grijze kolommen zijn werkelijke cijfers (uit Invoeren en je saldi), de andere zijn de verwachting. Bij werkelijke maanden staat bij "Rendement / overig" het verschil tussen je saldi en de ingevoerde bedragen.</p>
+    <div class="ywrap" id="kortWrap">${kortTableHtml()}</div></div>
   <div class="card"><div class="row"><button class="btn sec sm" data-a="kortOff" data-d="-12" title="12 maanden terug">«</button><button class="btn sec sm" data-a="kortOff" data-d="-1" title="Maand terug">‹</button>
-    <b style="font-size:16px">${mLong(first.ym)} – ${mLong(last.ym)}</b>
+    <span class="small muted">Tegels en grafieken:</span> <b style="font-size:16px">${mLong(first.ym)} – ${mLong(last.ym)}</b>
     <button class="btn sec sm" data-a="kortOff" data-d="1" title="Maand verder">›</button><button class="btn sec sm" data-a="kortOff" data-d="12" title="12 maanden verder">»</button>${kortOff!==0?'<button class="btn ghost sm" data-a="kortOff" data-d="0">Naar nu</button>':''}
     <span class="spacer"></span><span class="small" style="font-weight:600;color:var(--b800)">Inkomsten:</span>
     <div class="toggle"><button data-a="kortInc" data-v="plan" class="${kortInc==='plan'?'on':''}">Volgens Inkomen plannen</button><button data-a="kortInc" data-v="hist" class="${kortInc==='hist'?'on':''}">Gemiddelde laatste 12 mnd</button></div></div></div>
-  <div class="card"><h2>Per maand</h2><p class="small muted">Beweeg over een onderstreept bedrag om te zien waar het uit bestaat. Grijze kolommen zijn werkelijke cijfers (uit Invoeren en je saldi), de andere zijn de verwachting. Bij werkelijke maanden staat bij "Rendement / overig" het verschil tussen je saldi en de ingevoerde bedragen.</p>
-    <div class="ywrap"><table class="ytab ktab"><thead><tr><th class="yname"></th>${rows.map(r=>`<th class="${r.past?'kpast':''}${r.ym===cy_?' ynow':''}">${MN[+r.ym.slice(5)-1]} ${r.ym.slice(2,4)}<div class="small" style="font-weight:400;text-transform:none;letter-spacing:0">${r.past?(r.ym===cy_?'tot nu':'werkelijk'):'verwacht'}</div></th>`).join('')}</tr></thead><tbody>
-    ${tr('Vermogen begin',r=>`<td class="n">${E(r.begin)}</td>`)}
-    ${tr('+ Inkomsten',r=>cell(r.inc,1))}
-    ${tr('+ Incidentele inkomsten',r=>cell(r.sI,1,r.incI))}
-    ${tr('− Uitgaven',r=>cell(r.exp,-1))}
-    ${tr('− Incidentele uitgaven',r=>cell(r.sE,-1,r.expI))}
-    ${tr('− Investeringen',r=>cell(r.sV,-1,r.inv))}
-    ${tr('± Rendement / overig',r=>`<td class="n ${r.ret<0?'neg':r.ret>0?'pos':''}" ${r.past?'title="Werkelijke maand: het verschil tussen de saldi en de ingevoerde bedragen (rente, koersen, niet ingevoerde posten)"':''}>${Math.abs(r.ret)>=1?(r.ret<0?'−':'+')+E(Math.abs(r.ret)):''}</td>`)}
-    ${tr('<b>Vermogen eind</b>',r=>`<td class="n"><b class="${r.end<0?'neg':''}">${E(r.end)}</b></td>`,'gtot')}
-    ${tr('Waarvan vrij opneembaar',r=>`<td class="n ${r.vrij!=null&&r.vrij<0?'neg':''}">${r.vrij!=null?E(r.vrij):''}</td>`)}
-    </tbody></table></div></div>
+
   <div class="grid g4">
     <div class="tile"><div class="lbl">Vermogen nu</div><div class="val">${E(pl.start.total)}</div><div class="note">vrij opneembaar ${E(pl.start.besch)}</div></div>
     <div class="tile alt"><div class="lbl">${last.past?'Eind':'Verwacht eind'} ${mName(last.ym)}</div><div class="val ${last.end<pl.start.total?'neg':''}">${E(last.end)}</div><div class="note">${last.end>=first.begin?'+':'−'}${E(Math.abs(last.end-first.begin))} in deze 12 maanden</div></div>
@@ -1180,7 +1227,7 @@ function vKort(){
   <div class="card"><h2>Erin en eruit per maand</h2><p class="small muted" style="margin-top:-4px">Per maand links (groen) wat erin komt, rechts (oranje/rood) wat eruit gaat. Beweeg over een blok voor het bedrag.</p>${flowBars(rows)}</div>
 
   <div class="card"><h2>Incidentele bedragen en investeringen in deze periode</h2>${evList.length?`<div class="tablewrap"><table><tr><th>Maand</th><th>Wat</th><th class="n">Bedrag</th></tr>${evList.map(e=>`<tr><td>${mLong(e.ym)}</td><td>${e.t==='inv'?'<span class="badge">investering</span> ':e.t==='in'?'<span class="badge g">inkomst</span> ':'<span class="badge w">uitgave</span> '}${esc(e.txt)}</td><td class="n ${e.t==='in'?'pos':'neg'}">${e.t==='in'?'+':'−'}${E(e.amt)}</td></tr>`).join('')}</table></div>`:'<p class="muted">Geen incidentele bedragen of investeringen in deze periode.</p>'}
-    <p class="small muted" style="margin-top:8px">Incidentele inkomsten: eenmalige bedragen bij Inkomen plannen en verwachtingen bij Invoeren. Incidentele uitgaven: verwachtingen en losse uitgaven met een datum in de toekomst. Investeringen: aankopen boven het grensbedrag, in de maand van betaling. Rendement: ${numIn(S.settings.rend)}% per jaar over het hele vermogen (instelbaar bij Instellingen en per jaar bij 30 jaar).</p></div>`;
+    <p class="small muted" style="margin-top:8px">Incidentele inkomsten: eenmalige bedragen bij Inkomen plannen en verwachtingen bij Invoeren. Incidentele uitgaven: verwachtingen en losse uitgaven met een datum in de toekomst. Investeringen: aankopen boven het grensbedrag, in de maand van betaling. Rendement/rente (verwachting): per rekening. Spaarrekeningen met het ingestelde rentepercentage, deposito's op hun uitkeringsdatums tot de einddatum, goud, aandelen en crypto met het verwachte rendement dat je bij die rekening instelt (Rekeningen → Bewerken). Beweeg over het bedrag voor de verdeling.</p></div>`;
 }
 function vInkomen(){
   const people=[...S.settings.people,'Samen'];
@@ -1708,6 +1755,17 @@ function vInvesteringen(){
   <div class="info">De <b>betaling</b> is een geldbeweging: die zie je terug in je rekeningsaldi. De <b>afschrijving</b> verdeelt de kosten in gelijke delen over de maanden, vanaf de maand van betaling, en is geen nieuwe betaling. In het uitgavenoverzicht telt alleen de afschrijving mee, zodat niets dubbel wordt geteld.</div>
   <div class="card">${inv.length?`<div class="tablewrap"><table><tr><th>Omschrijving</th><th>Betaald op</th><th class="n">Bedrag</th><th class="n">Termijn</th><th class="n">Per maand</th><th class="n">Afgeschreven</th><th class="n">Resterend</th><th>Status</th><th></th></tr>${rows}</table></div>`:'<p class="muted">Nog geen investeringen.</p>'}</div>`;
 }
+
+function expRendCard(){
+  const cy=curY(), N=5, months=(12-+curYm().slice(5,7))+12*(N-1), sim=expReturnSim(Math.max(1,months)), c=ymI(curYm());
+  const yrs=Array.from({length:N},(_,i)=>cy+i), per={}, tot=yrs.map(()=>0);
+  sim.forEach((m,k)=>{ const y=+iYm(c+k+1).slice(0,4), yi=yrs.indexOf(y); if(yi<0) return; tot[yi]+=m.total; for(const x of m.byAcc){ (per[x.txt] ||= yrs.map(()=>0))[yi]+=x.amt; } });
+  const accRow=a=>{ const t=TYPES[a.type]; return t.waarde?`${numIn(+a.expRend||0)}% verwacht`:a.type==='deposito'?`${numIn(rateAt(a,todayStr()))}% · ${esc(RFREQ[a.renteFreq]||'')}${endDateOf(a)?' · tot '+dNl(endDateOf(a)):''}`:hasRate(a)?`${numIn(rateAt(a,todayStr()))}% rente`:'geen rente'; };
+  const rows=S.accounts.filter(a=>currentOf(a.id)).map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${accRow(a)}</div></td>${yrs.map((y,i)=>`<td class="n">${per[a.name]&&per[a.name][i]>=1?E(per[a.name][i]):'<span class="muted">–</span>'}</td>`).join('')}<td class="n">${TYPES[a.type].waarde?`<button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Instellen</button>`:''}</td></tr>`).join('');
+  return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Per rekening, in euro's. ${cy} telt vanaf volgende maand. Spaarrekeningen: het ingestelde rentepercentage (ook geplande rentewijzigingen). Deposito's: rente op de uitkeringsdatums, tot de einddatum. Goud, aandelen en crypto: het verwachte rendement dat je per rekening instelt. Rente en rendement worden opgeteld bij het saldo (rente op rente).</p>
+    <div class="tablewrap"><table><tr><th>Rekening</th>${yrs.map(y=>`<th class="n">${y}${y===cy?' (rest)':''}</th>`).join('')}<th></th></tr>${rows}
+    <tr class="tot"><td>Totaal</td>${tot.map(v=>`<td class="n">${E(v)}</td>`).join('')}<td></td></tr></table></div></div>`;
+}
 function vRendement(){
   const years=[...new Set(S.meas.map(m=>+m.date.slice(0,4)).concat(S.histRend.map(h=>+h.year)))].sort(); if(!years.includes(curY())) years.push(curY());
   const ys=years.slice(-6);
@@ -1718,6 +1776,7 @@ function vRendement(){
     ${S.accounts.map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
     <tr class="tot"><td>Totaal vermogen</td>${ys.map(y=>`<td class="n">${cell(totalRend(y))}</td>`).join('')}</tr></table></div>
   ${savingsBlock()}
+  ${expRendCard()}
   ${S.histRend.length?`<div class="card"><h2>Handmatig ingevoerd</h2><table><tr><th>Jaar</th><th>Rekening</th><th class="n">Rendement</th><th></th></tr>${S.histRend.slice().sort((a,b)=>b.year-a.year).map(h=>`<tr><td>${h.year}</td><td>${h.acc?esc(accById(h.acc)?.name||'(verwijderd)'):'Totaal vermogen'}</td><td class="n">${numIn(h.pct)}%</td><td class="n"><button class="btn ghost sm" data-a="delHR" data-id="${h.id}">✕</button></td></tr>`).join('')}</table></div>`:''}`;
 }
 function savingsBlock(){
@@ -1877,6 +1936,7 @@ function render(){
   renderNav();
   const fn={kort:vKort,inkomen:vInkomen,vrij:vVrij,analyse:vAnalyse,invoer:vInvoer,overzicht:vOverzicht,rekeningen:vRekeningen,maand:vMaand,vast:vVast,investeringen:vInvesteringen,rendement:vRendement,prognose:vPrognose,instellingen:vInstellingen}[view];
   $('#main').innerHTML=fn();
+  if(view==='kort') kortAfter(true);
 }
 
 /* ============ Acties ============ */
