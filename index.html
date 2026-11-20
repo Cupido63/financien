@@ -1075,7 +1075,7 @@ function onceForm(person){
 }
 
 /* ============ Komende 12 maanden: kortetermijnoverzicht per maand ============ */
-let kortOff=0, kortInc='hist';
+let kortOff=0, kortInc='plan';
 function lastFullMonths(n){ const c=ymI(curYm()); return Array.from({length:n},(_,i)=>iYm(c-n+i)); }
 function histAvg(kind){ const ms=lastFullMonths(12), set=new Set(ms), per={};
   for(const a of S.actuals){ if(a.kind!==kind||isInv(a)) continue; const ym=a.date.slice(0,7); if(!set.has(ym)) continue; per[ym]=(per[ym]||0)+ +a.amount; }
@@ -1157,15 +1157,7 @@ function vKort(){
     <b style="font-size:16px">${mLong(first.ym)} – ${mLong(last.ym)}</b>
     <button class="btn sec sm" data-a="kortOff" data-d="1" title="Maand verder">›</button><button class="btn sec sm" data-a="kortOff" data-d="12" title="12 maanden verder">»</button>${kortOff!==0?'<button class="btn ghost sm" data-a="kortOff" data-d="0">Naar nu</button>':''}
     <span class="spacer"></span><span class="small" style="font-weight:600;color:var(--b800)">Inkomsten:</span>
-    <div class="toggle"><button data-a="kortInc" data-v="hist" class="${kortInc==='hist'?'on':''}">Gemiddelde laatste 12 mnd</button><button data-a="kortInc" data-v="plan" class="${kortInc==='plan'?'on':''}">Volgens Inkomen plannen</button></div></div></div>
-  <div class="grid g4">
-    <div class="tile"><div class="lbl">Vermogen nu</div><div class="val">${E(pl.start.total)}</div><div class="note">vrij opneembaar ${E(pl.start.besch)}</div></div>
-    <div class="tile alt"><div class="lbl">${last.past?'Eind':'Verwacht eind'} ${mName(last.ym)}</div><div class="val ${last.end<pl.start.total?'neg':''}">${E(last.end)}</div><div class="note">${last.end>=first.begin?'+':'−'}${E(Math.abs(last.end-first.begin))} in deze 12 maanden</div></div>
-    <div class="tile alt2"><div class="lbl">Inkomsten per maand</div><div class="val">${E(first.inc)}</div><div class="note">${kortInc==='hist'?`gemiddelde over ${pl.hi.n} maand${pl.hi.n===1?'':'en'}`:'volgens Inkomen plannen'}</div></div>
-    <div class="tile alt3"><div class="lbl">Uitgaven per maand</div><div class="val">${E(pl.hu.avg)}</div><div class="note">gemiddelde over ${pl.hu.n} maand${pl.hu.n===1?'':'en'}, zonder investeringen</div></div>
-  </div>
-  <div class="card" style="margin-top:16px"><h2>Vermogen</h2>${lineCh}</div>
-  <div class="card"><h2>Erin en eruit per maand</h2><p class="small muted" style="margin-top:-4px">Per maand links (groen) wat erin komt, rechts (oranje/rood) wat eruit gaat. Beweeg over een blok voor het bedrag.</p>${flowBars(rows)}</div>
+    <div class="toggle"><button data-a="kortInc" data-v="plan" class="${kortInc==='plan'?'on':''}">Volgens Inkomen plannen</button><button data-a="kortInc" data-v="hist" class="${kortInc==='hist'?'on':''}">Gemiddelde laatste 12 mnd</button></div></div></div>
   <div class="card"><h2>Per maand</h2><p class="small muted">Beweeg over een onderstreept bedrag om te zien waar het uit bestaat. Grijze kolommen zijn werkelijke cijfers (uit Invoeren en je saldi), de andere zijn de verwachting. Bij werkelijke maanden staat bij "Rendement / overig" het verschil tussen je saldi en de ingevoerde bedragen.</p>
     <div class="ywrap"><table class="ytab ktab"><thead><tr><th class="yname"></th>${rows.map(r=>`<th class="${r.past?'kpast':''}${r.ym===cy_?' ynow':''}">${MN[+r.ym.slice(5)-1]} ${r.ym.slice(2,4)}<div class="small" style="font-weight:400;text-transform:none;letter-spacing:0">${r.past?(r.ym===cy_?'tot nu':'werkelijk'):'verwacht'}</div></th>`).join('')}</tr></thead><tbody>
     ${tr('Vermogen begin',r=>`<td class="n">${E(r.begin)}</td>`)}
@@ -1178,6 +1170,15 @@ function vKort(){
     ${tr('<b>Vermogen eind</b>',r=>`<td class="n"><b class="${r.end<0?'neg':''}">${E(r.end)}</b></td>`,'gtot')}
     ${tr('Waarvan vrij opneembaar',r=>`<td class="n ${r.vrij!=null&&r.vrij<0?'neg':''}">${r.vrij!=null?E(r.vrij):''}</td>`)}
     </tbody></table></div></div>
+  <div class="grid g4">
+    <div class="tile"><div class="lbl">Vermogen nu</div><div class="val">${E(pl.start.total)}</div><div class="note">vrij opneembaar ${E(pl.start.besch)}</div></div>
+    <div class="tile alt"><div class="lbl">${last.past?'Eind':'Verwacht eind'} ${mName(last.ym)}</div><div class="val ${last.end<pl.start.total?'neg':''}">${E(last.end)}</div><div class="note">${last.end>=first.begin?'+':'−'}${E(Math.abs(last.end-first.begin))} in deze 12 maanden</div></div>
+    <div class="tile alt2"><div class="lbl">Inkomsten per maand</div><div class="val">${E(first.inc)}</div><div class="note">${kortInc==='hist'?`gemiddelde over ${pl.hi.n} maand${pl.hi.n===1?'':'en'}`:'volgens Inkomen plannen'}</div></div>
+    <div class="tile alt3"><div class="lbl">Uitgaven per maand</div><div class="val">${E(pl.hu.avg)}</div><div class="note">gemiddelde over ${pl.hu.n} maand${pl.hu.n===1?'':'en'}, zonder investeringen</div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><h2>Vermogen</h2>${lineCh}</div>
+  <div class="card"><h2>Erin en eruit per maand</h2><p class="small muted" style="margin-top:-4px">Per maand links (groen) wat erin komt, rechts (oranje/rood) wat eruit gaat. Beweeg over een blok voor het bedrag.</p>${flowBars(rows)}</div>
+
   <div class="card"><h2>Incidentele bedragen en investeringen in deze periode</h2>${evList.length?`<div class="tablewrap"><table><tr><th>Maand</th><th>Wat</th><th class="n">Bedrag</th></tr>${evList.map(e=>`<tr><td>${mLong(e.ym)}</td><td>${e.t==='inv'?'<span class="badge">investering</span> ':e.t==='in'?'<span class="badge g">inkomst</span> ':'<span class="badge w">uitgave</span> '}${esc(e.txt)}</td><td class="n ${e.t==='in'?'pos':'neg'}">${e.t==='in'?'+':'−'}${E(e.amt)}</td></tr>`).join('')}</table></div>`:'<p class="muted">Geen incidentele bedragen of investeringen in deze periode.</p>'}
     <p class="small muted" style="margin-top:8px">Incidentele inkomsten: eenmalige bedragen bij Inkomen plannen en verwachtingen bij Invoeren. Incidentele uitgaven: verwachtingen en losse uitgaven met een datum in de toekomst. Investeringen: aankopen boven het grensbedrag, in de maand van betaling. Rendement: ${numIn(S.settings.rend)}% per jaar over het hele vermogen (instelbaar bij Instellingen en per jaar bij 30 jaar).</p></div>`;
 }
