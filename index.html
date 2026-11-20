@@ -1772,11 +1772,10 @@ function vRendement(){
   const cell=r=>r?`${P(r.pct)}${r.manual?' <span class="badge">handmatig</span>':r.received?(r.partial?' <span class="badge g">ontvangen tot nu</span>':' <span class="badge g">ontvangen</span>'):r.expected?' <span class="badge">verwacht</span>':r.calc?' <span class="badge">berekend</span>':r.partial?' <span class="badge w">tot nu</span>':''}${r.eur!=null?`<div class="small muted">${E(r.eur)}</div>`:''}`:'<span class="muted">–</span>';
   return `<div class="row"><div><h1>Rendement</h1><p class="sub">Per rekening en voor het totale vermogen.</p></div><span class="spacer"></span><button class="btn" data-a="addHR">+ Rendement handmatig</button></div>${demoBanner()}
   <div class="info"><b>Zo rekent de app:</b> bij rekeningen met rente telt eerst de rente die je echt hebt ontvangen. Zonder ontvangen rente schat de app: elk ingevoerd saldo geldt tot de volgende meting en elk rentepercentage tot de volgende wijziging, net als bij de bank per dag. Voor de rest van het lopende jaar rekent de app met het laatste saldo. Het percentage is de rente gedeeld door het gemiddelde saldo. Bij goud, crypto en beleggingen is het de waardestijging tussen het begin en het eind van het jaar, gecorrigeerd voor aan- en verkopen. Bijgestort geld telt dus niet als winst. Het totaal is de som van het rendement in euro's, gedeeld door het vermogen waarover dat rendement is behaald.</div>
-  <div class="card tablewrap"><table><tr><th>Rekening</th>${ys.map(y=>`<th class="n">${y}</th>`).join('')}</tr>
-    ${S.accounts.map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
-    <tr class="tot"><td>Totaal vermogen</td>${ys.map(y=>`<td class="n">${cell(totalRend(y))}</td>`).join('')}</tr></table></div>
-  ${savingsBlock()}
   ${expRendCard()}
+  <div class="card"><h2>Rendement tot nu, per jaar</h2><div class="tablewrap"><table><tr><th>Rekening</th>${ys.map(y=>`<th class="n">${y}</th>`).join('')}</tr>
+    ${S.accounts.map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
+    <tr class="tot"><td>Totaal vermogen</td>${ys.map(y=>`<td class="n">${cell(totalRend(y))}</td>`).join('')}</tr></table></div></div>
   ${S.histRend.length?`<div class="card"><h2>Handmatig ingevoerd</h2><table><tr><th>Jaar</th><th>Rekening</th><th class="n">Rendement</th><th></th></tr>${S.histRend.slice().sort((a,b)=>b.year-a.year).map(h=>`<tr><td>${h.year}</td><td>${h.acc?esc(accById(h.acc)?.name||'(verwijderd)'):'Totaal vermogen'}</td><td class="n">${numIn(h.pct)}%</td><td class="n"><button class="btn ghost sm" data-a="delHR" data-id="${h.id}">✕</button></td></tr>`).join('')}</table></div>`:''}`;
 }
 function savingsBlock(){
