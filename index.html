@@ -1108,16 +1108,16 @@ function payoutMonths(a,fromYm,toYm){
   return {set,step};
 }
 function expReturnSim(months){
-  const c=ymI(curYm()), from=iYm(c+1), to=iYm(c+months), out=Array.from({length:months},()=>({total:0,byAcc:[]}));
+  const c=ymI(curYm()), from=iYm(c+1), to=iYm(c+months), out=Array.from({length:months},()=>({total:0,byAcc:[],bal:{}}));
   for(const a of S.accounts){
     const cur=currentOf(a.id); if(!cur) continue; let v=cur.value; const t=TYPES[a.type];
     const end=endDateOf(a), pm=a.type==='deposito'?payoutMonths(a,from,to):null;
-    for(let k=1;k<=months;k++){ const ym=iYm(c+k); let amt=0;
+    for(let k=1;k<=months;k++){ const ym=iYm(c+k); let amt=0; out[k-1].bal[a.id]=v;
       if(t.waarde){ amt=v*((+a.expRend||0)/100)/12; }
       else if(a.type==='deposito' && hasRate(a)){ if(end && ym>end.slice(0,7)) break;
         if(pm.set.has(ym)){ if(pm.end){ const anc=interestAnchor(a,cur.date); amt=v*(Math.pow(1+rateAt(a,anc)/100,Math.max(0,daysBetween(anc,end))/365)-1); } else amt=v*rateAt(a,ym+'-01')/100*pm.step/12; } }
       else if(hasRate(a)){ amt=v*rateAt(a,ym+'-01')/100/12; }
-      if(amt){ v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name,amt}); }
+      if(amt){ v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name,amt,id:a.id}); }
     }
   }
   return out;
@@ -1762,15 +1762,34 @@ function vInvesteringen(){
   <div class="card">${inv.length?`<div class="tablewrap"><table><tr><th>Omschrijving</th><th>Betaald op</th><th class="n">Bedrag</th><th class="n">Termijn</th><th class="n">Per maand</th><th class="n">Afgeschreven</th><th class="n">Resterend</th><th>Status</th><th></th></tr>${rows}</table></div>`:'<p class="muted">Nog geen investeringen.</p>'}</div>`;
 }
 
+const rendSure = a => a.type==='deposito' && hasRate(a);
 function expRendCard(){
   const cy=curY(), N=5, months=(12-+curYm().slice(5,7))+12*(N-1), sim=expReturnSim(Math.max(1,months)), c=ymI(curYm());
-  const yrs=Array.from({length:N},(_,i)=>cy+i), per={}, tot=yrs.map(()=>0);
-  sim.forEach((m,k)=>{ const y=+iYm(c+k+1).slice(0,4), yi=yrs.indexOf(y); if(yi<0) return; tot[yi]+=m.total; for(const x of m.byAcc){ (per[x.txt] ||= yrs.map(()=>0))[yi]+=x.amt; } });
-  const accRow=a=>{ const t=TYPES[a.type]; return t.waarde?`${numIn(+a.expRend||0)}% verwacht`:a.type==='deposito'?`${numIn(rateAt(a,todayStr()))}% · ${endOnly(a)?'rente op de einddatum':esc(RFREQ[a.renteFreq]||'')}${endDateOf(a)?' · tot '+dNl(endDateOf(a)):''}`:hasRate(a)?`${numIn(rateAt(a,todayStr()))}% rente`:'geen rente'; };
-  const rows=S.accounts.filter(a=>currentOf(a.id)).map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${accRow(a)}</div></td>${yrs.map((y,i)=>`<td class="n">${per[a.name]&&per[a.name][i]>=1?E(per[a.name][i]):'<span class="muted">–</span>'}</td>`).join('')}<td class="n">${TYPES[a.type].waarde?`<button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Instellen</button>`:''}</td></tr>`).join('');
-  return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Per rekening, in euro's. ${cy} telt vanaf volgende maand. Spaarrekeningen: het ingestelde rentepercentage (ook geplande rentewijzigingen). Deposito's: rente op de uitkeringsdatums, tot de einddatum. Goud, aandelen en crypto: het verwachte rendement dat je per rekening instelt. Rente en rendement worden opgeteld bij het saldo (rente op rente).</p>
+  const yrs=Array.from({length:N},(_,i)=>cy+i), per={}, tot=yrs.map(()=>0), sure=yrs.map(()=>0), exp=yrs.map(()=>0);
+  sim.forEach((m,k)=>{ const y=+iYm(c+k+1).slice(0,4), yi=yrs.indexOf(y); if(yi<0) return; tot[yi]+=m.total;
+    for(const x of m.byAcc){ (per[x.id] ||= yrs.map(()=>0))[yi]+=x.amt; if(rendSure(accById(x.id))) sure[yi]+=x.amt; else exp[yi]+=x.amt; } });
+  // saldo op 1 januari per rekening: dit jaar = werkelijk (31 dec vorig jaar), later = uit de berekening
+  const accs=S.accounts.filter(a=>currentOf(a.id));
+  const startBal=(a,y)=>{ if(y===cy){ const m=valueAt(a.id,(cy-1)+'-12-31'); if(m) return m.value; if(a.start && a.start>=cy+'-01-01') return 0; const f=measOf(a.id)[0]; return f&&f.date.slice(0,4)<=String(cy)?(f.date>=cy+'-01-01'&&a.start?0:f.value):0; }
+    const k=ymI(y+'-01')-c-1; const r=sim[k]; if(r && r.bal[a.id]!=null) return r.bal[a.id];
+    if(a.type==='deposito'&&endDateOf(a)&&endDateOf(a).slice(0,4)<String(y)){ const mt=maturityOf(a); return mt&&mt.amount!=null?mt.amount:(currentOf(a.id)||{}).value||0; }
+    return (currentOf(a.id)||{}).value||0; };
+  const vermStart=yrs.map(y=>sum(accs.map(a=>startBal(a,y))));
+  const pc=(v,b)=>b>0&&v?`<div class="small muted">${P(v/b)}</div>`:'';
+  const accInfo=a=>{ const t=TYPES[a.type], cur=currentOf(a.id);
+    if(a.type==='deposito') return `<b>${E(cur.value)}</b> · ${numIn(rateAt(a,todayStr()))}% · ${endOnly(a)?'rente op de einddatum':esc(RFREQ[a.renteFreq]||'')}${endDateOf(a)?' · tot '+dNl(endDateOf(a)):''}`;
+    if(t.waarde) return `${E(cur.value)} · ${numIn(+a.expRend||0)}% verwacht per jaar`;
+    return hasRate(a)?`${E(cur.value)} · ${numIn(rateAt(a,todayStr()))}% rente (variabel)`:`${E(cur.value)} · geen rente`; };
+  const badge=a=>rendSure(a)?'<span class="badge g">zeker</span>':(hasRate(a)||TYPES[a.type].waarde)?'<span class="badge">verwacht</span>':'';
+  const ordered=[...accs.filter(rendSure),...accs.filter(a=>!rendSure(a))];
+  const rows=ordered.map(a=>`<tr><td>${esc(a.name)} ${badge(a)}<div class="small muted">${accInfo(a)}</div></td>${yrs.map((y,i)=>{ const v=per[a.id]?per[a.id][i]:0; return `<td class="n">${v>=1?E(v)+pc(v,startBal(a,y)):'<span class="muted">–</span>'}</td>`; }).join('')}<td class="n">${TYPES[a.type].waarde||a.type==='deposito'||hasRate(a)?`<button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Instellen</button>`:''}</td></tr>`).join('');
+  return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Per rekening in euro's, met daaronder het percentage ten opzichte van het saldo op 1 januari van dat jaar. ${cy} telt vanaf volgende maand. <span class="badge g">zeker</span> = deposito's: vaste rente, op de uitkeringsdatum of de einddatum. <span class="badge">verwacht</span> = spaarrekeningen (variabele rente), beleggingen, goud en crypto: een verwachting op basis van het percentage dat je instelt. Rente en rendement worden bij het saldo opgeteld (rente op rente).</p>
     <div class="tablewrap"><table><tr><th>Rekening</th>${yrs.map(y=>`<th class="n">${y}${y===cy?' (rest)':''}</th>`).join('')}<th></th></tr>${rows}
-    <tr class="tot"><td>Totaal</td>${tot.map(v=>`<td class="n">${E(v)}</td>`).join('')}<td></td></tr></table></div></div>`;
+    <tr><td><span class="badge g">zeker</span> deposito's</td>${sure.map(v=>`<td class="n">${v>=1?E(v):'–'}</td>`).join('')}<td></td></tr>
+    <tr><td><span class="badge">verwacht</span> overige</td>${exp.map(v=>`<td class="n">${v>=1?E(v):'–'}</td>`).join('')}<td></td></tr>
+    <tr class="tot"><td>Totaal<div class="small muted" style="font-weight:400">% t.o.v. het vermogen op 1 januari</div></td>${tot.map((v,i)=>`<td class="n">${E(v)}<div class="small muted" style="font-weight:400">${vermStart[i]?P(v/vermStart[i]):''}</div></td>`).join('')}<td></td></tr>
+    <tr><td class="small muted">Vermogen op 1 januari</td>${vermStart.map((v,i)=>`<td class="n small muted">${E(v)}${i===0?' <span title="werkelijk">(werkelijk)</span>':''}</td>`).join('')}<td></td></tr></table></div>
+    <p class="small muted" style="margin-top:6px">Vermogen op 1 januari: voor ${cy} het werkelijke saldo per 31 december (rekeningen die later zijn geopend tellen niet mee). Voor latere jaren de saldi met hun verwachte rente/rendement, zonder nieuwe inleg of opnames. Het geld van een afgelopen deposito blijft daarna meetellen (zonder rente), omdat het naar een andere rekening gaat.</p></div>`;
 }
 function vRendement(){
   const years=[...new Set(S.meas.map(m=>+m.date.slice(0,4)).concat(S.histRend.map(h=>+h.year)))].sort(); if(!years.includes(curY())) years.push(curY());
