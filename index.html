@@ -242,7 +242,7 @@ const TYPES = {
   aandelen:{label:'Aandelen / beleggingen',waarde:true,besch:false},
   overig:{label:'Overig',rente:true,besch:false}
 };
-const RFREQ = {week:'Wekelijks',maand:'Maandelijks',kwartaal:'Per kwartaal',jaar:'Jaarlijks'};
+const RFREQ = {week:'Wekelijks',maand:'Maandelijks',kwartaal:'Per kwartaal',jaar:'Jaarlijks',eind:'Op de einddatum (in één keer)'};
 const FREQ = {1:'Maandelijks',3:'Per kwartaal',12:'Jaarlijks'};
 const AFS = 'Afschrijving';
 const COLORS = ['#1d5fbf','#93b8ea','#0b2545','#5b8fd9','#c4d8f3','#1a4480','#3d7cc9','#7aa6e0','#27496d','#b0c9ec'];
@@ -480,6 +480,7 @@ function currentOf(accId){ const ms=measOf(accId); return ms[ms.length-1]||null;
 function rateAt(acc,date){ let r=+acc.rente||0; for(const x of (acc.rates||[]).slice().sort((a,b)=>a.from<b.from?-1:1)) if(x.from<=date) r=+x.pct; return r; }
 const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d||'');
 function payoutLabel(a){
+  if(endOnly(a)) return endDateOf(a)?'rente op de einddatum ('+dNl(endDateOf(a))+')':'rente op de einddatum';
   const d=a.renteDag; if(!d) return ''; if(!isDate(d)) return d;
   const day=+d.slice(8), dm=new Date(d+'T12:00').toLocaleDateString('nl-NL',{day:'numeric',month:'long'});
   return {week:'vanaf '+dNl(d), maand:'elke '+day+'e van de maand', kwartaal:'elk kwartaal, vanaf '+dNl(d), jaar:'jaarlijks op '+dm}[a.renteFreq]||dNl(d);
@@ -762,7 +763,7 @@ function accountForm(a){
     ]:[]),
     {k:'rente',label:(a.rates||[]).length?'Startpercentage rente (%)':'Rentepercentage per jaar (%)',type:'num',ph:'Bijv. 2,1',show:o=>TYPES[o.type].rente,help:'Wijzigt de rente later? Gebruik dan de knop "Rentewijziging" bij de rekening, dan blijven eerdere maanden met het oude percentage gerekend.'},
     {k:'renteFreq',label:'Frequentie rente-uitkering',type:'select',options:Object.entries(RFREQ),show:o=>TYPES[o.type].rente},
-    {k:'renteDag',label:'Verwachte uitkeringsdatum (eerstvolgende)',type:'date',show:o=>TYPES[o.type].rente,help:'Bij maandelijkse uitkering telt de dag, bij een uitkering per kwartaal of per jaar ook de maand.'},
+    {k:'renteDag',label:'Verwachte uitkeringsdatum (eerstvolgende)',type:'date',show:o=>TYPES[o.type].rente&&o.renteFreq!=='eind',help:'Bij maandelijkse uitkering telt de dag, bij een uitkering per kwartaal of per jaar ook de maand. Bij een deposito zonder uitkeringsdatum komt de rente in één keer op de einddatum.'},
     {k:'inleg',label:'Verwachte inleg per maand (€, optioneel)',type:'num',show:o=>TYPES[o.type].rente,help:'Alleen voor de vooruitblik. Een inleg is een overboeking binnen je vermogen, geen uitgave.'},
     {k:'gram',label:'Gewicht in gram (24 karaat)',type:'num',ph:'Bijv. 62,2',show:o=>o.type==='goud',help:'Dan berekent de app de waarde zelf uit de goudprijs: gewicht × goudprijs × percentage.'},
     {k:'goldPct',label:'Percentage van de goudprijs (%)',type:'num',ph:'Bijv. 95',show:o=>o.type==='goud',help:'Bijv. 95 als je bij verkoop 95% van de goudprijs krijgt. Leeg = 100%.'},
@@ -1097,7 +1098,9 @@ function actualMonthRow(ym){
 /* ===== Verwacht rendement per rekening, per maand (vanaf volgende maand) =====
    Goud/aandelen/crypto: ingesteld verwacht rendement. Spaarrekeningen: ingestelde rente (ook toekomstige rentewijzigingen).
    Deposito's: rente op de uitkeringsdatums, tot de einddatum. Rente en rendement worden bij het saldo opgeteld (rente op rente). */
+const endOnly = a => a.type==='deposito' && (a.renteFreq==='eind' || !isDate(a.renteDag));
 function payoutMonths(a,fromYm,toYm){
+  if(endOnly(a)){ const set=new Map(), e=endDateOf(a); if(e && e.slice(0,7)>=fromYm && e.slice(0,7)<=toYm) set.set(e.slice(0,7),e); return {set,step:0,end:true}; }
   const step={maand:1,kwartaal:3,jaar:12,week:1}[a.renteFreq]||12, set=new Map();
   let d=isDate(a.renteDag)?a.renteDag:(endDateOf(a)||null); if(!d) return {set,step};
   let n=0; while(d.slice(0,7)>fromYm && n++<600) d=monthsAdd(d,-step);
@@ -1111,7 +1114,8 @@ function expReturnSim(months){
     const end=endDateOf(a), pm=a.type==='deposito'?payoutMonths(a,from,to):null;
     for(let k=1;k<=months;k++){ const ym=iYm(c+k); let amt=0;
       if(t.waarde){ amt=v*((+a.expRend||0)/100)/12; }
-      else if(a.type==='deposito' && hasRate(a)){ if(end && ym>end.slice(0,7)) break; if(pm.set.has(ym)) amt=v*rateAt(a,ym+'-01')/100*pm.step/12; }
+      else if(a.type==='deposito' && hasRate(a)){ if(end && ym>end.slice(0,7)) break;
+        if(pm.set.has(ym)){ if(pm.end){ const anc=interestAnchor(a,cur.date); amt=v*(Math.pow(1+rateAt(a,anc)/100,Math.max(0,daysBetween(anc,end))/365)-1); } else amt=v*rateAt(a,ym+'-01')/100*pm.step/12; } }
       else if(hasRate(a)){ amt=v*rateAt(a,ym+'-01')/100/12; }
       if(amt){ v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name,amt}); }
     }
@@ -1298,6 +1302,7 @@ function vVrij(){
 }
 /* Deposito: eerstvolgende rente-uitkering en verwacht saldo op de einddatum */
 function nextPayout(a){
+  if(endOnly(a)){ const e=endDateOf(a); if(!e||e<=todayStr()) return null; const cur=currentOf(a.id); return {date:e, prev:interestAnchor(a,cur?cur.date:todayStr()), step:0, end:true}; }
   const step={week:0.25,maand:1,kwartaal:3,jaar:12}[a.renteFreq]||12; const t=todayStr();
   let d=isDate(a.renteDag)?a.renteDag:(endDateOf(a)||null); if(!d) return null;
   const add=(x,mo)=>{ if(mo<1){ return addDays(x,7); } const dt=new Date(x+'T12:00'), day=dt.getDate(); dt.setDate(1); dt.setMonth(dt.getMonth()+mo); const last=new Date(dt.getFullYear(),dt.getMonth()+1,0).getDate(); dt.setDate(Math.min(day,last)); return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate()); };
@@ -1308,10 +1313,11 @@ function nextPayout(a){
 }
 function depositLine(a,cur){
   const np=nextPayout(a), mt=maturityOf(a);
-  const lbl={week:'Wekelijkse',maand:'Maandelijkse',kwartaal:'Rente-uitkering per kwartaal',jaar:'Jaarlijkse'}[a.renteFreq]||'Jaarlijkse';
+  const lbl=np&&np.end?'Rente-uitkering op de einddatum':({week:'Wekelijkse',maand:'Maandelijkse',kwartaal:'Rente-uitkering per kwartaal',jaar:'Jaarlijkse'}[a.renteFreq]||'Jaarlijkse');
   const parts=[];
   if(np){ const days=Math.max(1,daysBetween(np.prev,np.date)); const amt=cur.value*rateAt(a,np.prev)/100*days/365;
-    parts.push(`${a.renteFreq==='kwartaal'?lbl:lbl+' rente-uitkering'} op <b>${dNl(np.date)}</b>: <b>${E(amt)}</b>`); }
+    const amt2=np.end?cur.value*(Math.pow(1+rateAt(a,np.prev)/100,Math.max(0,daysBetween(np.prev,np.date))/365)-1):amt;
+    parts.push(np.end?`Rente op de einddatum (<b>${dNl(np.date)}</b>): <b>${E(amt2)}</b>`:`${a.renteFreq==='kwartaal'?lbl:lbl+' rente-uitkering'} op <b>${dNl(np.date)}</b>: <b>${E(amt2)}</b>`); }
   else parts.push(`Vul bij Bewerken de datum van de rente-uitkering in om de eerstvolgende uitkering te zien`);
   if(mt && mt.amount!=null) parts.push(`verwacht saldo op <b>${dNl(mt.date)}</b>: <b>${E(mt.amount)}</b>${mt.est?'':' (zelf ingevuld)'}`);
   else if(np){ const amt=cur.value*rateAt(a,np.prev)/100*Math.max(1,daysBetween(np.prev,np.date))/365; parts.push(`verwacht saldo op <b>${dNl(np.date)}</b>: <b>${E(cur.value+amt)}</b>`); }
@@ -1324,7 +1330,7 @@ function vRekeningen(){
     const fl=S.flows.filter(f=>f.acc===a.id).sort((x,y)=>x.date<y.date?1:-1);
     const rts=(a.rates||[]).slice().sort((x,y)=>x.from<y.from?1:-1), ints=S.interest.filter(x=>x.acc===a.id).sort((x,y)=>x.date<y.date?1:-1);
     const fc=hasRate(a)?savingsForecast(a):null;
-    return `<div class="card acard${openHist[a.id]?' wide':''}"><div class="acc"><div><div class="nm">${esc(a.name)}</div><div class="row small muted" style="gap:6px;margin-top:3px"><span class="badge">${esc(t.label)}</span>${a.besch?'<span class="badge g">direct beschikbaar</span>':'<span class="badge d">vastgezet / niet direct</span>'}${hasRate(a)?`<span>${numIn(rateAt(a,todayStr()))}% rente · ${esc(RFREQ[a.renteFreq]||'')}${a.renteDag?' · '+esc(payoutLabel(a)):''}${a.inleg?' · inleg '+E(a.inleg)+' p/m':''}</span>`:''}</div></div>
+    return `<div class="card acard${openHist[a.id]?' wide':''}"><div class="acc"><div><div class="nm">${esc(a.name)}</div><div class="row small muted" style="gap:6px;margin-top:3px"><span class="badge">${esc(t.label)}</span>${a.besch?'<span class="badge g">direct beschikbaar</span>':'<span class="badge d">vastgezet / niet direct</span>'}${hasRate(a)?`<span>${numIn(rateAt(a,todayStr()))}% rente · ${endOnly(a)?'rente op de einddatum':esc(RFREQ[a.renteFreq]||'')}${a.renteDag?' · '+esc(payoutLabel(a)):''}${a.inleg?' · inleg '+E(a.inleg)+' p/m':''}</span>`:''}</div></div>
       <div><div class="v">${cur?E2(cur.value):'<span class="muted" style="font-size:16px">onbekend</span>'}</div><div class="small muted" style="text-align:right">${cur?'peildatum '+dNl(cur.date):'nog geen meting'}</div></div></div>
       ${a.type==='deposito'&&hasRate(a)&&cur?depositLine(a,cur):fc?`<div class="small muted" style="margin-top:8px">Verwachte rente komende 12 maanden: <b>${E(fc.int12)}</b> · verwacht saldo over 12 maanden: <b>${E(fc.rows[11].bal)}</b></div>`:''}
       ${a.type==='goud'?goldBlock(a):''}
@@ -1760,7 +1766,7 @@ function expRendCard(){
   const cy=curY(), N=5, months=(12-+curYm().slice(5,7))+12*(N-1), sim=expReturnSim(Math.max(1,months)), c=ymI(curYm());
   const yrs=Array.from({length:N},(_,i)=>cy+i), per={}, tot=yrs.map(()=>0);
   sim.forEach((m,k)=>{ const y=+iYm(c+k+1).slice(0,4), yi=yrs.indexOf(y); if(yi<0) return; tot[yi]+=m.total; for(const x of m.byAcc){ (per[x.txt] ||= yrs.map(()=>0))[yi]+=x.amt; } });
-  const accRow=a=>{ const t=TYPES[a.type]; return t.waarde?`${numIn(+a.expRend||0)}% verwacht`:a.type==='deposito'?`${numIn(rateAt(a,todayStr()))}% · ${esc(RFREQ[a.renteFreq]||'')}${endDateOf(a)?' · tot '+dNl(endDateOf(a)):''}`:hasRate(a)?`${numIn(rateAt(a,todayStr()))}% rente`:'geen rente'; };
+  const accRow=a=>{ const t=TYPES[a.type]; return t.waarde?`${numIn(+a.expRend||0)}% verwacht`:a.type==='deposito'?`${numIn(rateAt(a,todayStr()))}% · ${endOnly(a)?'rente op de einddatum':esc(RFREQ[a.renteFreq]||'')}${endDateOf(a)?' · tot '+dNl(endDateOf(a)):''}`:hasRate(a)?`${numIn(rateAt(a,todayStr()))}% rente`:'geen rente'; };
   const rows=S.accounts.filter(a=>currentOf(a.id)).map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${accRow(a)}</div></td>${yrs.map((y,i)=>`<td class="n">${per[a.name]&&per[a.name][i]>=1?E(per[a.name][i]):'<span class="muted">–</span>'}</td>`).join('')}<td class="n">${TYPES[a.type].waarde?`<button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Instellen</button>`:''}</td></tr>`).join('');
   return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Per rekening, in euro's. ${cy} telt vanaf volgende maand. Spaarrekeningen: het ingestelde rentepercentage (ook geplande rentewijzigingen). Deposito's: rente op de uitkeringsdatums, tot de einddatum. Goud, aandelen en crypto: het verwachte rendement dat je per rekening instelt. Rente en rendement worden opgeteld bij het saldo (rente op rente).</p>
     <div class="tablewrap"><table><tr><th>Rekening</th>${yrs.map(y=>`<th class="n">${y}${y===cy?' (rest)':''}</th>`).join('')}<th></th></tr>${rows}
