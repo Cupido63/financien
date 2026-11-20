@@ -1112,18 +1112,27 @@ function payoutMonths(a,fromYm,toYm){
   n=0; while(d.slice(0,7)<=toYm && n++<1200){ if(d.slice(0,7)>=fromYm) set.set(d.slice(0,7),d); d=monthsAdd(d,step); }
   return {set,step};
 }
+/* Grote en incidentele uitgaven in een toekomstige maand (k=1: ook de rest van deze maand) */
+function futureOutflow(ym,k){
+  const today=todayStr(), inM=d=> k===1 ? (d>today && d.slice(0,7)<=ym) : d.slice(0,7)===ym;
+  return sum(S.actuals.filter(a=>a.kind==='uit'&&!a.grid&&a.monthTotal==null&&inM(a.date)).map(a=>+a.amount))
+       + sum(S.expected.filter(e=>e.kind==='uit'&&(e.ym===ym||(k===1&&e.ym===curYm()))).map(e=>+e.amount));
+}
 function expReturnSim(months){
   const c=ymI(curYm()), from=iYm(c+1), to=iYm(c+months), out=Array.from({length:months},()=>({total:0,byAcc:[],bal:{}}));
-  for(const a of S.accounts){
-    const cur=currentOf(a.id); if(!cur) continue; let v=cur.value; const t=TYPES[a.type];
-    const end=endDateOf(a), pm=a.type==='deposito'?payoutMonths(a,from,to):null;
-    for(let k=1;k<=months;k++){ const ym=iYm(c+k); let amt=0; out[k-1].bal[a.id]=v;
-      if(t.waarde){ amt=v*((+a.expRend||0)/100)/12; }
-      else if(a.type==='deposito' && hasRate(a)){ if(end && ym>end.slice(0,7)) break;
-        if(pm.set.has(ym)){ if(pm.end){ const anc=interestAnchor(a,cur.date); amt=v*rateAt(a,anc)/100*Math.max(0,daysBetween(anc,end))/365; } else amt=v*rateAt(a,ym+'-01')/100*pm.step/12; } }
-      else if(hasRate(a)){ amt=v*rateAt(a,ym+'-01')/100/12; }
-      if(amt){ if(a.type!=='deposito') v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name,amt,id:a.id,toVrij:a.type==='deposito'||!!a.besch}); }
+  const st=S.accounts.map(a=>{ const cur=currentOf(a.id); if(!cur) return null;
+    return {a,cur,v:cur.value,t:TYPES[a.type],end:endDateOf(a),pm:a.type==='deposito'?payoutMonths(a,from,to):null,done:false}; }).filter(Boolean);
+  for(let k=1;k<=months;k++){ const ym=iYm(c+k);
+    for(const x of st){ if(x.done) continue; const a=x.a; let amt=0; out[k-1].bal[a.id]=x.v;
+      if(x.t.waarde){ amt=x.v*((+a.expRend||0)/100)/12; }
+      else if(a.type==='deposito' && hasRate(a)){ if(x.end && ym>x.end.slice(0,7)){ x.done=true; continue; }
+        if(x.pm.set.has(ym)){ if(x.pm.end){ const anc=interestAnchor(a,x.cur.date); amt=x.v*rateAt(a,anc)/100*Math.max(0,daysBetween(anc,x.end))/365; } else amt=x.v*rateAt(a,ym+'-01')/100*x.pm.step/12; } }
+      else if(hasRate(a)){ amt=x.v*rateAt(a,ym+'-01')/100/12; }
+      if(amt){ if(a.type!=='deposito') x.v+=amt; out[k-1].total+=amt; out[k-1].byAcc.push({txt:a.name,amt,id:a.id,toVrij:a.type==='deposito'||!!a.besch}); }
     }
+    // aankopen en incidentele uitgaven gaan af van de vrij opneembare rekeningen, naar verhouding van hun saldo
+    const of=futureOutflow(ym,k);
+    if(of>0){ const pool=st.filter(x=>x.a.besch&&!x.done&&x.v>0), tot=sum(pool.map(x=>x.v)); if(tot>0){ const f=Math.min(1,of/tot); for(const x of pool) x.v-=x.v*f; } }
   }
   return out;
 }
@@ -1776,7 +1785,9 @@ function expRendCard(){
     const k=ymI(y+'-01')-c-1; const r=sim[k]; if(r && r.bal[a.id]!=null) return r.bal[a.id];
     if(a.type==='deposito'&&endDateOf(a)&&endDateOf(a).slice(0,4)<String(y)){ const mt=maturityOf(a); return mt&&mt.amount!=null?mt.amount:(currentOf(a.id)||{}).value||0; }
     return (currentOf(a.id)||{}).value||0; };
-  const vermStart=yrs.map(y=>sum(accs.map(a=>startBal(a,y))));
+  const kp=kortPlan(0,Math.max(1,months)).rows;
+  const projVerm=y=>{ const idx=ymI((y-1)+'-12')-c-1; if(idx<0) return monthStatus(curYm()).total; return kp[idx]?kp[idx].end:null; };
+  const vermStart=yrs.map(y=>y===cy?sum(accs.map(a=>startBal(a,y))):projVerm(y));
   // basis voor de percentages: rekeningen die in dat jaar rente/rendement kunnen opleveren
   const active=(a,y)=>!(a.type==='deposito'&&endDateOf(a)&&endDateOf(a)<y+'-01-01');
   const baseOf=(a,y)=>{ const b=startBal(a,y); if(b>0) return b; if(a.start&&a.start.slice(0,4)===String(y)) return (currentOf(a.id)||{}).value||0; return 0; };
@@ -1795,7 +1806,7 @@ function expRendCard(){
     <tr><td><span class="badge g">zeker</span> deposito's<div class="small muted">% t.o.v. het vermogen op 1 januari</div></td>${sure.map((v,i)=>`<td class="n">${v>=1?E(v)+pc(v,vermStart[i]):'–'}</td>`).join('')}<td></td></tr>
     <tr><td><span class="badge">verwacht</span> overige<div class="small muted">% t.o.v. het vermogen op 1 januari</div></td>${exp.map((v,i)=>`<td class="n">${v>=1?E(v)+pc(v,vermStart[i]):'–'}</td>`).join('')}<td></td></tr>
     <tr class="tot"><td>Totaal<div class="small muted" style="font-weight:400">% t.o.v. het vermogen op 1 januari</div></td>${tot.map((v,i)=>`<td class="n">${E(v)}<div class="small muted" style="font-weight:400">${vermStart[i]?P(v/vermStart[i]):''}</div></td>`).join('')}<td></td></tr>
-    <tr><td class="small muted">Vermogen op 1 januari</td>${vermStart.map((v,i)=>`<td class="n small muted">${E(v)}${i===0?' <span title="werkelijk">(werkelijk)</span>':''}</td>`).join('')}<td></td></tr></table></div>
+    <tr><td class="small muted">Vermogen op 1 januari<div class="small muted">later: uit Komende maanden</div></td>${vermStart.map((v,i)=>`<td class="n small muted">${v!=null?E(v):'–'}${i===0?' (werkelijk)':' (verwacht)'}</td>`).join('')}<td></td></tr></table></div>
 </div>`;
 }
 function vRendement(){
