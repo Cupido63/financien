@@ -1777,6 +1777,11 @@ function expRendCard(){
     if(a.type==='deposito'&&endDateOf(a)&&endDateOf(a).slice(0,4)<String(y)){ const mt=maturityOf(a); return mt&&mt.amount!=null?mt.amount:(currentOf(a.id)||{}).value||0; }
     return (currentOf(a.id)||{}).value||0; };
   const vermStart=yrs.map(y=>sum(accs.map(a=>startBal(a,y))));
+  // basis voor de percentages: rekeningen die in dat jaar rente/rendement kunnen opleveren
+  const active=(a,y)=>!(a.type==='deposito'&&endDateOf(a)&&endDateOf(a)<y+'-01-01');
+  const baseOf=(a,y)=>{ const b=startBal(a,y); if(b>0) return b; if(a.start&&a.start.slice(0,4)===String(y)) return (currentOf(a.id)||{}).value||0; return 0; };
+  const sureBase=yrs.map(y=>sum(accs.filter(a=>rendSure(a)&&active(a,y)).map(a=>baseOf(a,y))));
+  const expBase=yrs.map(y=>sum(accs.filter(a=>!rendSure(a)&&(hasRate(a)||TYPES[a.type].waarde)).map(a=>baseOf(a,y))));
   const pc=(v,b)=>b>0&&v?`<div class="small muted">${P(v/b)}</div>`:'';
   const accInfo=a=>{ const t=TYPES[a.type], cur=currentOf(a.id);
     if(a.type==='deposito') return `<b>${E(cur.value)}</b> · ${numIn(rateAt(a,todayStr()))}% · ${endOnly(a)?'rente op de einddatum':esc(RFREQ[a.renteFreq]||'')}${endDateOf(a)?' · tot '+dNl(endDateOf(a)):''}`;
@@ -1787,8 +1792,8 @@ function expRendCard(){
   const rows=ordered.map(a=>`<tr><td>${esc(a.name)} ${badge(a)}<div class="small muted">${accInfo(a)}</div></td>${yrs.map((y,i)=>{ const v=per[a.id]?per[a.id][i]:0; return `<td class="n">${v>=1?E(v)+pc(v,startBal(a,y)):'<span class="muted">–</span>'}</td>`; }).join('')}<td class="n">${TYPES[a.type].waarde||a.type==='deposito'||hasRate(a)?`<button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Instellen</button>`:''}</td></tr>`).join('');
   return `<div class="card"><h2>Verwacht rendement komende jaren</h2><p class="small muted">Bedrag per jaar, met het percentage t.o.v. het saldo op 1 januari. <span class="badge g">zeker</span> vaste rente · <span class="badge">verwacht</span> schatting.</p>
     <div class="tablewrap"><table><tr><th>Rekening</th>${yrs.map(y=>`<th class="n">${y}${y===cy?' (rest)':''}</th>`).join('')}<th></th></tr>${rows}
-    <tr><td><span class="badge g">zeker</span> deposito's</td>${sure.map(v=>`<td class="n">${v>=1?E(v):'–'}</td>`).join('')}<td></td></tr>
-    <tr><td><span class="badge">verwacht</span> overige</td>${exp.map(v=>`<td class="n">${v>=1?E(v):'–'}</td>`).join('')}<td></td></tr>
+    <tr><td><span class="badge g">zeker</span> deposito's<div class="small muted">% t.o.v. het bedrag op de deposito's</div></td>${sure.map((v,i)=>`<td class="n">${v>=1?E(v)+pc(v,sureBase[i]):'–'}</td>`).join('')}<td></td></tr>
+    <tr><td><span class="badge">verwacht</span> overige<div class="small muted">% t.o.v. spaarrekeningen, beleggingen, goud en crypto</div></td>${exp.map((v,i)=>`<td class="n">${v>=1?E(v)+pc(v,expBase[i]):'–'}</td>`).join('')}<td></td></tr>
     <tr class="tot"><td>Totaal<div class="small muted" style="font-weight:400">% t.o.v. het vermogen op 1 januari</div></td>${tot.map((v,i)=>`<td class="n">${E(v)}<div class="small muted" style="font-weight:400">${vermStart[i]?P(v/vermStart[i]):''}</div></td>`).join('')}<td></td></tr>
     <tr><td class="small muted">Vermogen op 1 januari</td>${vermStart.map((v,i)=>`<td class="n small muted">${E(v)}${i===0?' <span title="werkelijk">(werkelijk)</span>':''}</td>`).join('')}<td></td></tr></table></div>
 </div>`;
