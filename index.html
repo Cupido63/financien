@@ -1656,9 +1656,11 @@ function accMonthCard(){
   const accs=S.accounts.filter(a=>!a.closed || a.closed>=showFrom()+'-01');
   if(!accs.length) return '';
   const months=[]; for(let i=to;i>=from;i--) months.push(iYm(i));
+  const off=new Set(S.settings.amOff||[]), isOn=a=>!off.has(a.id);
   const sd=d=>{ const [y,m,dd]=d.split('-'); return +dd+' '+MN[+m-1]+(y.slice(2)!==''?' '+y.slice(2):''); };
   const rows=months.map(ym=>{ const end=iYm(ymI(ym)+1)+'-01'; let tot=0, miss=0;
-    const cells=accs.map(a=>{
+    const cells=accs.map(a=>{ const dim=isOn(a)?'':' style="opacity:.35"';
+      if(!isOn(a)){ const m=(!(a.start&&a.start>end)&&!(a.closed&&a.closed<=end))?valueAt(a.id,end):null; return `<td class="n"${dim}>${m?E(m.value):'–'}</td>`; }
       if(a.start && a.start>end) return `<td class="n muted small">nog niet geopend</td>`;
       if(a.closed && a.closed<=end) return `<td class="n muted small">gesloten</td>`;
       const m=valueAt(a.id,end); const ld=lastDay(ym);
@@ -1667,8 +1669,8 @@ function accMonthCard(){
       return `<td class="n" ${old?`title="Geen saldo in ${mLong(ym)}: het laatst bekende saldo (${dNl(m.date)}) is gebruikt. Klik op de datum om een saldo in te voeren."`:`title="Saldo van ${dNl(m.date)}"`}>${E(m.value)}<div class="small ${old?'':'muted'}" style="${old?'color:#b26b00':''}">${old?`<button class="btn ghost sm" data-a="meas" data-id="${a.id}" data-date="${ld}" style="padding:0;color:#b26b00">${sd(m.date)} ✎</button>`:sd(m.date)}</div></td>`; });
     return `<tr><th style="text-align:left;white-space:nowrap;position:sticky;left:0;background:#f3f6fa;z-index:1">${MN[+ym.slice(5)-1]} ${ym.slice(0,4)}</th>${cells.join('')}<td class="n"><b>${E(tot)}</b>${miss?`<div class="small" style="color:var(--neg)">${miss} onbekend</div>`:''}</td></tr>`; }).join('');
   return `<details class="card" style="margin-top:14px" ${window._amOpen?'open':''} ontoggle="window._amOpen=this.open"><summary style="cursor:pointer;font-weight:700">Vermogen per maand, per rekening</summary>
-  <p class="small muted">De stand aan het eind van elke maand en de datum van het saldo dat daarvoor is gebruikt: het laatste saldo tot en met de 1e van de volgende maand. <span style="color:#b26b00">Oranje datum</span> = geen saldo in die maand, het laatst bekende saldo is gebruikt (klik om een saldo in te voeren; bij deposito's is dat normaal, want het bedrag staat vast). <span style="color:var(--neg)">Onbekend</span> = nog nooit een saldo ingevoerd; telt niet mee in het totaal.</p>
-  <div class="tablewrap"><table class="amtab"><tr><th style="position:sticky;left:0;z-index:2">Maand (eind)</th>${accs.map(a=>`<th class="n" style="white-space:normal;min-width:96px">${esc(a.name)}${a.closed?'<div class="small muted" style="text-transform:none">gesloten</div>':''}</th>`).join('')}<th class="n">Totaal</th></tr>${rows}</table></div></details>`;
+  <p class="small muted">De stand aan het eind van elke maand en de datum van het saldo dat daarvoor is gebruikt: het laatste saldo tot en met de 1e van de volgende maand. <span style="color:#b26b00">Oranje datum</span> = geen saldo in die maand, het laatst bekende saldo is gebruikt (klik om een saldo in te voeren; bij deposito's is dat normaal, want het bedrag staat vast). Met de vinkjes bovenaan kies je welke rekeningen meetellen in het totaal van dit overzicht; de rest van de app verandert daar niet door. <span style="color:var(--neg)">Onbekend</span> = nog nooit een saldo ingevoerd; telt niet mee in het totaal.</p>
+  <div class="tablewrap" style="max-height:75vh;overflow:auto"><table class="amtab" style="border-collapse:separate;border-spacing:0"><tr><th style="position:sticky;left:0;top:0;z-index:3;background:#eef3fa">Maand (eind)</th>${accs.map(a=>`<th class="n" style="white-space:normal;min-width:96px;position:sticky;top:0;z-index:2;background:#eef3fa"><label style="cursor:pointer;display:block" title="Aan- of uitvinken: telt mee in het totaal van dit overzicht"><input type="checkbox" class="amacc" data-id="${a.id}" ${isOn(a)?'checked':''}> ${esc(a.name)}</label>${a.closed?'<div class="small muted" style="text-transform:none">gesloten</div>':''}</th>`).join('')}<th class="n" style="position:sticky;top:0;z-index:2;background:#eef3fa">${off.size&&accs.some(a=>off.has(a.id))?'Totaal<div class="small" style="text-transform:none;color:#b26b00">selectie</div>':'Totaal'}</th></tr>${rows}</table></div></details>`;
 }
 function vRekeningen(){
   const st=monthStatus(curYm());
@@ -2720,6 +2722,7 @@ document.addEventListener('change',e=>{
   if(t.classList.contains('subname')){ const err=renameSub(t.dataset.cat,t.dataset.sub,t.value); if(err){ toast(err); t.value=t.dataset.sub; return; } save(); keepScroll(); toast('Naam gewijzigd'); return; }
   if(t.classList.contains('pfield')){ const v=nlToIso(t.value); if(v===null){ toast('Vul de datum in als dd-mm-jjjj, bijvoorbeeld 10-09-1963'); t.focus(); return; }
     const P=(S.settings.persons ||= {}); const o=(P[t.dataset.p] ||= {}); if(v) o[t.dataset.k]=v; else delete o[t.dataset.k]; save(); keepScroll(); toast(v?'Opgeslagen: '+dNl(v):'Datum gewist'); return; }
+  if(t.classList.contains('amacc')){ const o=new Set(S.settings.amOff||[]); if(t.checked) o.delete(t.dataset.id); else o.add(t.dataset.id); S.settings.amOff=[...o]; save(); const w=document.querySelector('.amtab')?.parentElement, st=w?[w.scrollTop,w.scrollLeft]:null; keepScroll(); const w2=document.querySelector('.amtab')?.parentElement; if(w2&&st){ w2.scrollTop=st[0]; w2.scrollLeft=st[1]; } return; }
   if(t.classList.contains('b3acc')){ const a=accById(t.dataset.id); if(a){ if(t.checked) delete a.noBox3; else a.noBox3=true; save(); keepScroll(); toast(a.name+(t.checked?': telt mee voor box 3':': telt niet mee voor box 3')); } return; }
   if(t.id==='cpiUse'){ S.settings.cpiUse=t.checked; _cpiMemo=null; save(); keepScroll(); toast(t.checked?'Persoonlijke inflatie wordt gebruikt':'Vaste inflatie uit Instellingen wordt gebruikt'); return; }
   if(t.id==='aowLater'){ S.settings.aowLater=+t.value; save(); keepScroll(); toast('Opgeslagen'); return; }
