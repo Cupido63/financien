@@ -995,6 +995,7 @@ function accountForm(a){
     {k:'besch',label:'Direct beschikbaar (telt mee als vrij besteedbaar geld)',type:'cb'},
     {k:'inBox3',label:'Telt mee voor box 3 (vermogensbelasting)',type:'cb',help:'Vinkje uit voor bijvoorbeeld een lijfrente- of pensioenrekening.'},
     {k:'start',label:'Geopend op (optioneel)',type:'date',help:'Maanden vóór deze datum tellen niet als "onbekend".'},
+    ...(a.closed?[{k:'closed',label:'Gesloten op',type:'date',req:true,help:'Tot deze datum telt de rekening mee in je vermogen. Het saldo van € 0 op de oude sluitdatum verhuist automatisch mee.'}]:[]),
     {k:'endDate',label:'Komt vrij op (einddatum)',type:'date',show:o=>!o.besch,help:'Voor een deposito of ander vastgezet geld: de datum waarop het geld vrij opneembaar wordt. Wordt gebruikt in het overzicht "Vrij geld".'},
     {k:'reinvest',label:'Na afloop herbeleggen tegen (%)',type:'num',ph:'leeg = algemene instelling',show:o=>o.type==='deposito',help:'Alleen voor het verwachte rendement na de einddatum. Leeg = de instelling bij Instellingen (standaard dezelfde rente). 0 = niet herbeleggen.'},
     {k:'endAmount',label:'Verwacht bedrag bij vrijkomen (€, optioneel)',type:'num',show:o=>!o.besch && o.endDate,help:'Leeg = de app schat het zelf: huidige waarde plus de rente tot de einddatum.'}
@@ -1004,6 +1005,7 @@ function accountForm(a){
       return `Klopt de verwachte inleg van ${E(o.inleg)} per maand? Dat is ${curV>0&&o.inleg>=curV?'meer dan het hele saldo':'erg veel'}. Dit veld is voor het bedrag dat je elke maand bijstort, niet voor het saldo. Klik nogmaals op Opslaan als het toch klopt.`; }
     window._inlegOk=null;
     o.noBox3=!o.inBox3; delete o.inBox3;
+    if(!isNew && a.closed && o.closed && o.closed!==a.closed){ const z=S.meas.find(m=>m.acc===a.id&&m.date===a.closed&&+m.value===0); if(z){ S.meas=S.meas.filter(m=>!(m.acc===a.id&&m.date===o.closed&&m!==z)); z.date=o.closed; } }
     if(isNew){
       const sal=o.saldo, sd=o.saldoDate||todayStr(); delete o.saldo; delete o.saldoDate;
       const acc=Object.assign({id:uid()},o); S.accounts.push(acc);
@@ -1662,7 +1664,7 @@ function accMonthCard(){
     const cells=accs.map(a=>{ const dim=isOn(a)?'':' style="opacity:.35"';
       if(!isOn(a)){ const m=(!(a.start&&a.start>end)&&!(a.closed&&a.closed<=end))?valueAt(a.id,end):null; return `<td class="n"${dim}>${m?E(m.value):'–'}</td>`; }
       if(a.start && a.start>end) return `<td class="n muted small">nog niet geopend</td>`;
-      if(a.closed && a.closed<=end) return `<td class="n muted small">gesloten</td>`;
+      if(a.closed && a.closed<=end){ if(a.closed>ym+'-01') return `<td class="n" title="Gesloten op ${dNl(a.closed)}">${E(0)}<div class="small muted">gesloten ${sd(a.closed)}</div></td>`; return `<td class="n muted small">gesloten</td>`; }
       const m=valueAt(a.id,end); const ld=lastDay(ym);
       if(!m){ miss++; return `<td class="n"><button class="btn ghost sm" data-a="meas" data-id="${a.id}" data-date="${ld}" title="Saldo invoeren voor eind ${mLong(ym)}" style="color:#c0392b !important">onbekend ✎</button></td>`; }
       tot+=m.value; const old=m.date<=ym+'-01' && a.type!=='deposito';
