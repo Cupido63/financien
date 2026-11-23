@@ -305,6 +305,37 @@ async function ghPut(text,sha){
   const r=await fetch(ghUrl(),{method:'PUT',headers:Object.assign({'Content-Type':'application/json'},ghHeaders()),body:JSON.stringify(body)});
   if(r.status===409||r.status===422) throw new Error('conflict'); if(r.status===401) throw new Error('token'); if(r.status===403||r.status===404) throw new Error('rechten'); if(!r.ok) throw new Error('net:'+r.status);
   return (await r.json()).content.sha; }
+/* Bijlagen (offertes, facturen): elk bestand versleuteld als eigen bestand in de map bijlagen/ van de privé-repository */
+const attUrl=id=>`https://api.github.com/repos/${encodeURIComponent(CFG.owner)}/${encodeURIComponent(CFG.repo)}/contents/bijlagen/${encodeURIComponent(id)}.json`;
+async function attPut(id,bytes){
+  const iv=crypto.getRandomValues(new Uint8Array(12)), ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},CRYPTO.key,bytes);
+  const text=JSON.stringify({app:'huishoudfinancien-bijlage',v:1,salt:b64e(CRYPTO.salt),iv:b64e(iv),data:b64e(ct)});
+  const r=await fetch(attUrl(id),{method:'PUT',headers:Object.assign({'Content-Type':'application/json'},ghHeaders()),body:JSON.stringify({message:'Bijlage toegevoegd',content:b64e(new TextEncoder().encode(text))})});
+  if(r.status===401) throw new Error('token'); if(r.status===403||r.status===404) throw new Error('rechten'); if(!r.ok) throw new Error('net:'+r.status); }
+async function attGet(id){
+  const r=await fetch(attUrl(id)+'?t='+Date.now(),{headers:ghHeaders(),cache:'no-store'}); if(r.status===404) throw new Error('Bijlage niet gevonden'); if(!r.ok) throw new Error('net:'+r.status);
+  const j=await r.json(); let content=j.content;
+  if(!content||j.encoding==='none'){ const b=await fetch(`https://api.github.com/repos/${encodeURIComponent(CFG.owner)}/${encodeURIComponent(CFG.repo)}/git/blobs/${j.sha}`,{headers:ghHeaders()}); if(!b.ok) throw new Error('net:'+b.status); content=(await b.json()).content; }
+  const o=JSON.parse(new TextDecoder().decode(b64d(content.replace(/\n/g,''))));
+  const key=b64e(b64d(o.salt))===b64e(CRYPTO.salt)?CRYPTO.key:await deriveKey(CRYPTO.pw,b64d(o.salt));
+  return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(o.iv)},key,b64d(o.data))); }
+async function attDel(id){
+  const r=await fetch(attUrl(id)+'?t='+Date.now(),{headers:ghHeaders(),cache:'no-store'}); if(r.status===404) return; if(!r.ok) throw new Error('net:'+r.status);
+  const j=await r.json(); const d=await fetch(attUrl(id),{method:'DELETE',headers:Object.assign({'Content-Type':'application/json'},ghHeaders()),body:JSON.stringify({message:'Bijlage verwijderd',sha:j.sha})});
+  if(!d.ok&&d.status!==404) throw new Error('net:'+d.status); }
+/* Oudere versies van data.json (GitHub bewaart elke opgeslagen versie) */
+const ghBase=()=>`https://api.github.com/repos/${encodeURIComponent(CFG.owner)}/${encodeURIComponent(CFG.repo)}`;
+async function histList(until,page){
+  const r=await fetch(`${ghBase()}/commits?path=data.json&per_page=30&page=${page||1}&until=${encodeURIComponent(until+'T23:59:59Z')}`,{headers:ghHeaders(),cache:'no-store'});
+  if(r.status===401) throw new Error('token'); if(!r.ok) throw new Error('net:'+r.status);
+  return (await r.json()).map(c=>({sha:c.sha,date:(c.commit&&c.commit.committer&&c.commit.committer.date)||''})); }
+async function histGet(sha){
+  const f=await fetch(`${ghBase()}/contents/data.json?ref=${sha}`,{headers:ghHeaders(),cache:'no-store'}); if(!f.ok) throw new Error('net:'+f.status);
+  const j=await f.json(); let content=j.content;
+  if(!content||j.encoding==='none'){ const b=await fetch(`${ghBase()}/git/blobs/${j.sha}`,{headers:ghHeaders()}); if(!b.ok) throw new Error('net:'+b.status); content=(await b.json()).content; }
+  const o=JSON.parse(new TextDecoder().decode(b64d(content.replace(/\n/g,''))));
+  const key=o.salt===b64e(CRYPTO.salt)?CRYPTO.key:await deriveKey(CRYPTO.pw,b64d(o.salt));
+  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(o.iv)},key,b64d(o.data)); return JSON.parse(new TextDecoder().decode(pt)); }
 const errTxt=e=>{ const m=String(e&&e.message||e); return m==='token'?'Het token klopt niet of is verlopen.':m==='repo'?'Die repository bestaat niet, of het token heeft er geen toegang toe.':m==='rechten'?'Het token mag niet schrijven in deze repository. Geef het token de rechten "Contents: Read and write".':m==='wachtwoord'?'Het wachtwoord klopt niet.':m==='format'?'data.json in deze repository is geen bestand van deze app.':m.startsWith('net')||m==='Failed to fetch'?'Geen verbinding met GitHub. Controleer je internet.':m; };
 function cacheLocal(blob){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify({blob,sha:remoteSha})); }catch(e){} }
 function setSync(st,msg){ dbState=st; if(msg!=null) syncMsg=msg; const el=document.getElementById('syncDot'); if(el){ el.className='sync '+st; el.textContent=syncTxt(); } }
@@ -513,9 +544,11 @@ function savingsForecast(acc,months=24){
   return {rows,int12,start:cur};
 }
 function monthStatus(ym){
-  const end=lastDay(ym); let total=0, besch=0, known=0; const missing=[], stale=[];
+  /* Stand aan het eind van de maand = laatste saldo t/m de 1e van de volgende maand (een saldo op 1 januari is de stand van 31 december) */
+  const end=iYm(ymI(ym)+1)+'-01'; let total=0, besch=0, known=0; const missing=[], stale=[];
   for(const a of S.accounts){
-    if(a.start && a.start.slice(0,7)>ym) continue;
+    if(a.start && a.start>end) continue;
+    if(a.closed && a.closed<=end) continue;
     const m=valueAt(a.id,end);
     if(!m){ missing.push(a.name); continue; }
     known++; if(m.date.slice(0,7)<ym) stale.push({name:a.name,date:m.date});
@@ -547,7 +580,7 @@ function monthOverview(ym){
   res.tIn=tot('in'); res.tUit=tot('uit');
   return res;
 }
-function yp(y){ const o=S.years[y]||{}; const st=S.settings; return {infl:o.infl??st.infl, rend:o.rend??st.rend, growth:o.growth??st.growth}; }
+function yp(y){ const o=S.years[y]||{}; const st=S.settings; return {infl:o.infl??baseInfl(y), rend:o.rend??st.rend, growth:o.growth??st.growth}; }
 function expenseBase(){
   const c=ymI(curYm()); const months=[]; for(let i=c-24;i<c;i++) months.push(iYm(i));
   const withData=months.filter(ym=>S.actuals.some(a=>a.kind==='uit' && a.date.slice(0,7)===ym));
@@ -564,6 +597,192 @@ function dueActiveNow(r){ const i=ymI(curYm()); return ymI(r.start)<=i && (!r.en
 /* Vaste lasten die in de toekomst stoppen of beginnen: verschil met de vaste lasten van nu (per jaar) */
 function fixedNowAnnual(){ return sum(S.recurring.filter(r=>r.kind==='uit'&&dueActiveNow(r)).map(r=>+r.amount*12/(+r.freq||1))); }
 function fixedInMonths(y,m1,m2){ let t=0; for(let m=m1;m<=m2;m++){ const ym=y+'-'+pad(m); for(const r of S.recurring) if(r.kind==='uit'&&dueIn(r,ym)) t+=+r.amount; } return t; }
+/* ============ Persoonlijke inflatie (CBS) ============
+   Prijsstijging per CBS-categorie (jaarmutatie CPI) × jouw aandeel in de uitgaven = jouw inflatie.
+   S.cpi = {at, period, cats:{code:{t,yoy,w}}, long:{code:gem. jaarmutatie 10 jaar}, longFrom, longTo}
+   S.cpiMap = {'Cat' | 'Cat|Sub' | 'inv:Cat' : 'code:011000' | 'pct:3,1' | 'vast' | 'none'} */
+const CBS_API='https://opendata.cbs.nl/ODataApi/OData/', CBS_NEW='86141NED', CBS_OLD='83131NED';
+let cpiBusy=false, cpiTried=false, cpiErr='', _cpiMemo=null;
+const CPI_RULES=[
+  [/hypothe/i,'vast'],
+  [/(^|\s)zorgverzeker/i,/verzekering/i], [/verzeker/i,/verzekering/i],
+  [/restaurant|uit eten|bezorg|afhaal|lunch|koffie|horeca/i,/restaurant|horeca|catering|^11[0-9]{4}/i],
+  [/huur(?!.*inkomst)/i,/werkelijke huur|^041000/i],
+  [/gemeent|belasting|heffing|water|riool|afval/i,/watervoorziening|water en overige|diensten .*woning|^044000/i],
+  [/onderhoud auto|apk|garage/i,/gebruik van (eigen )?vervoer|^072000/i],
+  [/onderhoud|reparatie|klus/i,/onderhoud en reparatie van de woning|^043000/i],
+  [/inricht|meubel/i,/woninginrichting|meubels|^05[01]000/i],
+  [/energie|gas|stroom|elektr/i,/elektriciteit, gas|^045000/i],
+  [/boodschap|supermarkt|voeding|levensmiddel/i,/voedingsmiddelen en alcoholvrije|^010000/i],
+  [/drogist|verzorging|kapper/i,/persoonlijke verzorging/i],
+  [/lease|brandstof|benzine|laden|tank|parkeren/i,/gebruik van (eigen )?vervoer|^072000/i],
+  [/openbaar vervoer|^ov$|trein|bus\b|taxi/i,/vervoersdiensten|personenvervoer|^073000/i],
+  [/vervoer|auto|mobiliteit/i,/^070000/i],
+  [/(^|\s)zorg|eigen risico|medisch|tandarts|apotheek/i,/gezondheid|^060000/i],
+  [/vakantie|reizen\b|citytrip|wintersport|weekend/i,/pakketreizen|accommodatie|^096000/i],
+  [/vrije tijd|sport|hobby|uitgaan|concert|festival|cadeau|gadget|recreatie/i,/recreatie|cultuur|^090000/i],
+  [/kleding|schoen/i,/kleding en schoenen|^030000/i],
+  [/telefoon|abonnement|internet|stream|muziek|communicatie/i,/communicatie|informatie/i],
+  [/kinder|opvang/i,/sociale bescherming|kinderopvang/i],
+  [/onderwijs|studie|school|cursus/i,/onderwijs/i]
+];
+const cpiCats=()=>Object.entries((S.cpi&&S.cpi.cats)||{}).sort((a,b)=>a[0]<b[0]?-1:1);
+function cpiFind(re){ if(re==='vast') return 'vast'; for(const [code,o] of cpiCats()){ if(re.test(code+' '+o.t)) return 'code:'+code; } return null; }
+function cpiSuggest(name, inv){
+  if(inv) return /vervoer|auto|fiets|motor/i.test(name)?(cpiFind(/aanschaf van (motor)?voertuigen|^071000/i)||'none'):'none';
+  for(const [re,target] of CPI_RULES) if(re.test(name)){ const r=cpiFind(target); if(r) return r; }
+  return null; }
+function cpiMapOf(key){
+  const M=S.cpiMap||{}; if(M[key]) return M[key];
+  if(key.startsWith('inv:')) return cpiSuggest(key.slice(4),true);
+  const i=key.indexOf('|');
+  if(i>0){ const sub=key.slice(i+1); if(/hypothe/i.test(sub)) return 'vast'; const cat=key.slice(0,i); if(M[cat]) return M[cat]; return cpiSuggest(sub)||cpiMapOf(cat); }
+  return cpiSuggest(key)||(S.cpi&&S.cpi.cats&&S.cpi.cats['000000']?'code:000000':'none');
+}
+const cpiIncluded=m=>!!m && (m.startsWith('code:')||m.startsWith('pct:'));
+function cpiRateNow(m){ if(!m) return null; if(m.startsWith('pct:')) return parseNum(m.slice(4)); if(m.startsWith('code:')){ const o=S.cpi&&S.cpi.cats[m.slice(5)]; return o&&o.yoy!=null?o.yoy:null; } return null; }
+function cpiRateLong(m){ if(!m) return null; if(m.startsWith('pct:')) return parseNum(m.slice(4)); if(m.startsWith('code:')){ const c=m.slice(5), L=(S.cpi&&S.cpi.long)||{}; if(L[c]!=null) return L[c]; const n=cpiRateNow(m); if(n!=null) return n; return L['000000']??null; } return null; }
+const cpiLabel=m=>!m?'–':m==='vast'?'Vast bedrag (stijgt niet mee)':m==='none'?'Telt niet mee':m.startsWith('pct:')?'Eigen percentage: '+m.slice(4)+'%':((S.cpi&&S.cpi.cats[m.slice(5)])?S.cpi.cats[m.slice(5)].t:'CBS '+m.slice(5));
+/* Uitgaven per sleutel over de laatste 12 volledige maanden (met afschrijvingen) */
+function cpiSpend(){
+  const c=ymI(curYm()), months=[]; for(let i=c-12;i<c;i++) months.push(iYm(i)); const set=new Set(months), amt={};
+  for(const a of S.actuals){ if(a.kind!=='uit') continue;
+    if(isInv(a)){ let t=0; for(const ym of months) t+=deprIn(a,ym); if(t>0){ const k='inv:'+a.cat; amt[k]=(amt[k]||0)+t; } continue; }
+    if(!set.has(a.date.slice(0,7))) continue; const k=a.sub?a.cat+'|'+a.sub:a.cat; amt[k]=(amt[k]||0)+ +a.amount; }
+  return {amt, months};
+}
+/* Groepeer naar weergaveregels: categorie, of subcategorie als die anders is gekoppeld */
+let _cpiRowsMemo=null;
+function cpiRows(){ if(_cpiRowsMemo) return _cpiRowsMemo; return _cpiRowsMemo=cpiRows0(); }
+function cpiRows0(){
+  const {amt}=cpiSpend(), rows={};
+  for(const [k,v] of Object.entries(amt)){ let key=k; const i=k.indexOf('|'); if(i>0 && cpiMapOf(k)===cpiMapOf(k.slice(0,i)) && !(S.cpiMap||{})[k]) key=k.slice(0,i);
+    const m=cpiMapOf(key); (rows[key] ||= {key,amt:0,m}).amt+=v; }
+  const list=Object.values(rows), inc=list.filter(r=>cpiIncluded(r.m)&&cpiRateNow(r.m)!=null), T=sum(inc.map(r=>r.amt));
+  for(const r of list){ r.inc=inc.includes(r); r.share=r.inc&&T?r.amt/T:0; r.rate=cpiRateNow(r.m); r.long=cpiRateLong(r.m); r.contrib=r.inc?r.share*r.rate:0; }
+  const now=inc.length?sum(inc.map(r=>r.contrib)):null, long=inc.length&&T?sum(inc.map(r=>r.amt/T*(r.long??0))):null;
+  return {list:list.sort((a,b)=>(b.inc-a.inc)||(b.amt-a.amt)), now, long, T};
+}
+const cpiOn=()=>(S.settings.cpiUse??true) && !!(S.cpi&&S.cpi.cats) && cpiRows().now!=null;
+/* Projectie voor 30 jaar: elke sleutel groeit met zijn eigen langjarige prijsstijging; vaste bedragen (hypotheek) blijven gelijk */
+function cpiBase24(){
+  const c=ymI(curYm()), months=[]; for(let i=c-24;i<c;i++) months.push(iYm(i));
+  const withData=months.filter(ym=>S.actuals.some(a=>a.kind==='uit'&&a.date.slice(0,7)===ym)), b={};
+  for(const a of S.actuals){ if(a.kind!=='uit'||isInv(a)||!withData.includes(a.date.slice(0,7))) continue; const k=a.sub?a.cat+'|'+a.sub:a.cat; b[k]=(b[k]||0)+ +a.amount; }
+  if(withData.length){ for(const k in b) b[k]/=withData.length; }
+  else for(const r of S.recurring){ if(r.kind!=='uit'||!dueActiveNow(r)) continue; const k=recKey(r); b[k]=(b[k]||0)+r.amount/(+r.freq||1); }
+  return b;
+}
+const recKey=r=>/hypothe/i.test(r.name||'')?r.cat+'|Hypotheek':r.cat;
+function cpiProj(){
+  if(_cpiMemo) return _cpiMemo;
+  const cy=curY(), base=cpiBase24(); const keys=new Set(Object.keys(base)); for(const r of S.recurring) if(r.kind==='uit') keys.add(recKey(r));
+  const F={}, maps={}; for(const k of keys){ F[k]={[cy]:1}; maps[k]=cpiMapOf(k); }
+  const rate={};
+  for(let y=cy+1;y<=cy+31;y++){ const ov=(S.years[y]||{}).infl;
+    let num=0, den=0; for(const k of keys){ const m=maps[k]; if(!cpiIncluded(m)) continue; const r=ov??cpiRateLong(m); if(r==null) continue; const w=(base[k]||0)*F[k][y-1]; num+=w*r; den+=w; }
+    const basket=ov??(den?num/den:S.settings.infl); rate[y]=basket;
+    for(const k of keys){ const m=maps[k]; const r=m==='vast'?0:cpiIncluded(m)?(ov??cpiRateLong(m)??basket):basket; F[k][y]=F[k][y-1]*(1+r/100); } }
+  return _cpiMemo={base,F,maps,rate};
+}
+function cpiExpYear(y){ const P=cpiProj(); return sum(Object.entries(P.base).map(([k,v])=>v*12*P.F[k][y])); }
+function cpiFixAdj(y,fixNowByKey){ const P=cpiProj(); let t=0; const inY={};
+  for(let m=1;m<=12;m++){ const ym=y+'-'+pad(m); for(const r of S.recurring) if(r.kind==='uit'&&dueIn(r,ym)){ const k=recKey(r); inY[k]=(inY[k]||0)+ +r.amount; } }
+  for(const k of new Set([...Object.keys(inY),...Object.keys(fixNowByKey)])) t+=((inY[k]||0)-(fixNowByKey[k]||0))*((P.F[k]||{})[y]??1);
+  return t; }
+function fixNowByKey(){ const o={}; for(const r of S.recurring) if(r.kind==='uit'&&dueActiveNow(r)){ const k=recKey(r); o[k]=(o[k]||0)+ +r.amount*12/(+r.freq||1); } return o; }
+function baseInfl(y){ if(cpiOn()){ if(y>curY()) return cpiProj().rate[y]??S.settings.infl; return cpiRows().now; } return S.settings.infl; }
+
+/* ---- Ophalen bij het CBS (open data, geen account nodig) ---- */
+async function cbsGet(path){ const ctl=new AbortController(), to=setTimeout(()=>ctl.abort(),20000);
+  try{ const r=await fetch(CBS_API+path+(path.includes('?')?'&':'?')+'$format=json',{signal:ctl.signal}); if(!r.ok) throw new Error('CBS antwoordt met fout '+r.status); const j=await r.json(); return j.value||[]; }
+  finally{ clearTimeout(to); } }
+async function cbsTable(id, periods){
+  const [props,cats]=await Promise.all([cbsGet(id+'/DataProperties'),cbsGet(id+'/Bestedingscategorieen')]);
+  const yoy=props.find(p=>p.Type==='Topic'&&/^jaarmutatie cpi/i.test(p.Title||'')&&!/afgeleid|constante/i.test(p.Title||''));
+  const w=props.find(p=>p.Type==='Topic'&&/weging/i.test(p.Title||''));
+  if(!yoy) throw new Error('Kolom jaarmutatie niet gevonden in CBS-tabel '+id);
+  const codeOf={}; for(const c of cats){ const k=String(c.Key).trim(), m=String(c.Title||'').match(/^(\d{6})\s+(.*)$/); codeOf[k]=m?{code:m[1],t:m[2]}:{code:k,t:c.Title||k}; }
+  let per=periods; if(typeof per==='function'){ const ps=(await cbsGet(id+'/Perioden')).map(p=>String(p.Key).trim()); per=per(ps); }
+  const filt=per.map(p=>`Perioden eq '${p}'`).join(' or ');
+  const sel=['Bestedingscategorieen','Perioden',yoy.Key].concat(w?[w.Key]:[]).join(',');
+  const rows=await cbsGet(id+'/TypedDataSet?$filter='+encodeURIComponent(filt)+'&$select='+sel);
+  return rows.map(r=>({...codeOf[String(r.Bestedingscategorieen).trim()]||{code:String(r.Bestedingscategorieen).trim(),t:''}, per:String(r.Perioden).trim(), yoy:r[yoy.Key], w:w?r[w.Key]:null}));
+}
+async function cpiFetch(manual){
+  if(cpiBusy) return; cpiBusy=true; cpiErr=''; if(manual) toast('Cijfers ophalen bij het CBS…'); keepScroll();
+  try{
+    const keep=c=>/^\d{3}000$/.test(c);
+    const cur=await cbsTable(CBS_NEW, ps=>ps.filter(p=>/MM\d\d$/.test(p)).sort().slice(-3));
+    const cats={}; let period='';
+    for(const r of cur.sort((a,b)=>a.per<b.per?-1:1)){ if(!keep(r.code)||r.yoy==null) continue; cats[r.code]={t:r.t,yoy:+r.yoy,w:r.w!=null?+r.w:null,per:r.per}; if(r.per>period) period=r.per; }
+    if(!Object.keys(cats).length) throw new Error('Geen cijfers ontvangen');
+    let long={}, longFrom=null, longTo=null;
+    try{ const yrs=[]; for(let y=curY()-10;y<curY();y++) yrs.push(y+'JJ00');
+      const old=await cbsTable(CBS_OLD, yrs), acc={};
+      for(const r of old){ if(!keep(r.code)||r.yoy==null) continue; (acc[r.code] ||= []).push(+r.yoy); const yy=+r.per.slice(0,4); longFrom=Math.min(longFrom??yy,yy); longTo=Math.max(longTo??yy,yy); }
+      for(const [c,a] of Object.entries(acc)) if(a.length>=5) long[c]=Math.round(sum(a)/a.length*100)/100;
+    }catch(e){ long={}; }
+    S.cpi={at:todayStr(),period,cats,long,longFrom,longTo}; save(); if(manual) toast('CBS-cijfers bijgewerkt');
+  }catch(e){ cpiErr=(e&&e.name==='AbortError')?'Het CBS reageert niet.':(String(e.message||e).includes('fetch')||e instanceof TypeError)?'Je browser kan de CBS-cijfers niet rechtstreeks ophalen.':String(e.message||e); if(manual) toast('Ophalen lukt niet'); }
+  cpiBusy=false; _cpiMemo=null; keepScroll();
+}
+function cpiAuto(){ if(cpiTried||cpiBusy) return; const old=!S.cpi||!S.cpi.at||daysBetween(S.cpi.at,todayStr())>14; if(!old) return; cpiTried=true; setTimeout(()=>cpiFetch(false),50); }
+const perNl=p=>{ const m=String(p||'').match(/^(\d{4})MM(\d\d)$/); return m?mLong(m[1]+'-'+m[2]):p||''; };
+
+function cpiCard(){
+  cpiAuto();
+  const R=cpiRows(), has=!!(S.cpi&&S.cpi.cats), tot=has&&S.cpi.cats['000000']?S.cpi.cats['000000'].yoy:null;
+  const f1=v=>Math.abs(v).toFixed(1).replace('.',','), f2=v=>Math.abs(v).toFixed(2).replace('.',',');
+  const sg=v=>v==null?'–':(v<0?'−':'+')+f1(v)+'%';
+  const nm=k=>k.startsWith('inv:')?esc(k.slice(4))+' <span class="badge">afschrijving</span>':esc(k.replace('|',' › '));
+  const incRows=R.list.filter(r=>r.inc), exc=R.list.filter(r=>!r.inc);
+  const status=cpiBusy?'<span class="badge">ophalen…</span>':has?`CBS-cijfers van ${perNl(S.cpi.period)} · opgehaald ${dNl(S.cpi.at)}`:'Nog geen CBS-cijfers';
+  return `<div class="card" id="cpiCard"><div class="row" style="align-items:flex-start"><div><h2 style="margin:0">Jouw persoonlijke inflatie</h2><p class="small muted" style="margin:4px 0 0">Prijsstijging per categorie volgens het CBS, gewogen naar jouw uitgaven van de laatste 12 maanden.</p></div><span class="spacer"></span><button class="btn sec sm" data-a="cpiMap">Categorieën koppelen</button></div>
+  ${cpiErr?`<div class="warn" style="margin-top:10px">${esc(cpiErr)} ${has?'De app gebruikt de laatst opgehaalde cijfers.':'Kies bij <b>Categorieën koppelen</b> per categorie "Eigen percentage" om het zelf in te vullen, of probeer het later opnieuw.'}</div>`:''}
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0">
+    <div class="stat" style="background:var(--b100);border-radius:10px;padding:10px 12px"><div class="small muted">Jouw inflatie</div><div style="font-size:24px;font-weight:700">${R.now==null?'–':numIn(Math.round(R.now*10)/10)+'%'}</div></div>
+    <div style="background:#f3f6fa;border-radius:10px;padding:10px 12px"><div class="small muted">Landelijk (CBS)</div><div style="font-size:24px;font-weight:700">${tot==null?'–':numIn(tot)+'%'}</div></div>
+    <div style="background:#f3f6fa;border-radius:10px;padding:10px 12px" title="Gemiddelde prijsstijging per categorie over ${S.cpi&&S.cpi.longFrom?S.cpi.longFrom+'–'+S.cpi.longTo:'de afgelopen jaren'}, gewogen naar jouw uitgaven. Dit gebruikt de 30-jaarsplanning."><div class="small muted">Langjarig gemiddelde</div><div style="font-size:24px;font-weight:700">${R.long==null?'–':numIn(Math.round(R.long*10)/10)+'%'}</div></div>
+  </div>
+  ${incRows.length?`<div class="tablewrap"><table><tr><th>Categorie</th><th class="n">Jouw aandeel</th><th class="n"></th><th class="n">Prijsstijging (CBS)</th><th class="n"></th><th class="n">Bijdrage</th></tr>
+  ${incRows.map(r=>`<tr><td>${nm(r.key)}<div class="small muted">${esc(cpiLabel(r.m))}</div></td><td class="n">${P(r.share)}<div class="small muted">${E(r.amt)}</div></td><td class="n muted">×</td><td class="n ${r.rate>=4?'neg':r.rate<0?'pos':''}">${sg(r.rate)}</td><td class="n muted">=</td><td class="n"><b class="${r.contrib<0?'pos':''}">${(r.contrib<0?'−':'')+f2(r.contrib)}</b></td></tr>`).join('')}
+  <tr class="tot"><td>Totaal</td><td class="n">100%</td><td></td><td></td><td></td><td class="n"><b>${R.now==null?'–':numIn(Math.round(R.now*10)/10)+'%'}</b></td></tr></table></div>
+  <p class="small muted">Voorbeeld: ${incRows[0]?`${esc(incRows[0].key.replace('|',' › ').replace(/^inv:/,''))} is ${P(incRows[0].share)} van je uitgaven × ${sg(incRows[0].rate)} prijsstijging = ${f2(incRows[0].contrib)} procentpunt van je inflatie.`:''}</p>`
+  :`<p class="muted">${has?'Nog geen uitgaven in de laatste 12 maanden.':cpiBusy?'Even geduld…':'Zodra de CBS-cijfers binnen zijn (of je eigen percentages hebt ingevuld), zie je hier je persoonlijke inflatie.'}</p>`}
+  ${exc.length&&incRows.length?`<p class="small muted"><b>Niet meegeteld:</b> ${exc.map(r=>`${nm(r.key)} (${E(r.amt)}, ${r.m==='vast'?'vast bedrag':r.m==='none'?'telt niet mee':'geen cijfer'})`).join(' · ')}</p>`:''}
+  <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap"><label class="small"><input type="checkbox" id="cpiUse" ${(S.settings.cpiUse??true)?'checked':''}> Gebruik mijn persoonlijke inflatie in de 30-jaarsplanning en bij reëel rendement</label><span class="spacer"></span><span class="small muted">${status}</span><button class="btn ghost sm" data-a="cpiFetch" ${cpiBusy?'disabled':''}>Nu ophalen</button></div>
+  </div>`;
+}
+function cpiMapModal(){
+  const {amt}=cpiSpend(); const cats=new Set(), subs={}, invs=new Set();
+  for(const k of Object.keys(amt)){ if(k.startsWith('inv:')){ invs.add(k.slice(4)); continue; } const i=k.indexOf('|'); const c=i>0?k.slice(0,i):k; cats.add(c); if(i>0) (subs[c] ||= new Set()).add(k.slice(i+1)); }
+  for(const c of S.expCats){ cats.add(c); for(const s of (S.subCats[c]||[])) (subs[c] ||= new Set()).add(s); }
+  for(const a of S.actuals) if(isInv(a)) invs.add(a.cat);
+  const opts=(key,isSub)=>{ const M=(S.cpiMap||{})[key]||'', cur=cpiMapOf(key);
+    const o=[['',`Automatisch: ${cpiLabel(cur)}`]];
+    for(const [code,c] of cpiCats()) o.push(['code:'+code, code+' '+c.t+' ('+(c.yoy<0?'−':'+')+numIn(Math.abs(c.yoy))+'%)']);
+    o.push(['vast','Vast bedrag, stijgt niet mee (bijv. hypotheek)'],['none','Telt niet mee'],['pct','Eigen percentage…']);
+    const sel=M.startsWith('pct:')?'pct':M;
+    return `<select class="cpisel" data-key="${esc(key)}" style="flex:1;min-width:0;width:100%">${o.map(([v,l])=>`<option value="${esc(v)}" ${v===sel?'selected':''}>${esc(l)}</option>`).join('')}</select><input class="cpipct" data-key="${esc(key)}" inputmode="decimal" placeholder="%" value="${M.startsWith('pct:')?esc(M.slice(4)):''}" style="width:70px;${sel==='pct'?'':'display:none'}">`; };
+  const line=(label,key,isSub)=>`<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:8px;align-items:center;margin:4px 0;${isSub?'padding-left:18px':''}"><div class="${isSub?'small':''}">${label}</div><div style="display:flex;gap:6px">${opts(key,isSub)}</div></div>`;
+  const body=[...cats].filter(c=>c!==AFS).map(c=>line('<b>'+esc(c)+'</b>',c,false)+[...(subs[c]||[])].map(s=>line(esc(s),c+'|'+s,true)).join('')).join('')
+    + (invs.size?`<h4 style="margin:14px 0 4px">Investeringen (afschrijving per maand)</h4>`+[...invs].map(c=>line(esc(c),'inv:'+c,false)).join(''):'');
+  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal" style="max-width:760px"><h3>Categorieën koppelen aan het CBS</h3>
+  <p class="small muted">Kies per categorie de CBS-categorie waarvan de prijsstijging het best past. "Automatisch" is een voorstel van de app. Een subcategorie kan afwijken, zoals de hypotheek (vast bedrag: telt niet mee in je inflatie en stijgt in de 30-jaarsplanning niet mee). ${cpiCats().length?'':'<b>Er zijn nog geen CBS-cijfers opgehaald</b>; je kunt wel een eigen percentage invullen.'}</p>
+  <div style="max-height:60vh;overflow:auto;padding-right:4px">${body}</div>
+  <div class="actions"><button class="btn sec" id="cpiReset">Alles automatisch</button><span class="spacer"></span><button class="btn sec" id="cpiCancel">Annuleren</button><button class="btn" id="cpiSave">Opslaan</button></div></div></div>`;
+  const root=$('#modalRoot');
+  root.querySelectorAll('.cpisel').forEach(s=>s.addEventListener('change',()=>{ const p=root.querySelector(`.cpipct[data-key="${CSS.escape(s.dataset.key)}"]`); p.style.display=s.value==='pct'?'':'none'; if(s.value==='pct') p.focus(); }));
+  $('#cpiCancel').onclick=closeModal; $('#ov').addEventListener('mousedown',e=>{ if(e.target.id==='ov') closeModal(); });
+  $('#cpiReset').onclick=()=>{ root.querySelectorAll('.cpisel').forEach(s=>{ s.value=''; s.dispatchEvent(new Event('change')); }); };
+  $('#cpiSave').onclick=()=>{ const M={};
+    for(const s of root.querySelectorAll('.cpisel')){ const k=s.dataset.key; if(!s.value) continue;
+      if(s.value==='pct'){ const v=parseNum(root.querySelector(`.cpipct[data-key="${CSS.escape(k)}"]`).value); if(isNaN(v)){ toast('Vul een percentage in bij '+k.replace('|',' › ').replace(/^inv:/,'')); return; } M[k]='pct:'+numIn(v); }
+      else M[k]=s.value; }
+    S.cpiMap=M; _cpiMemo=null; save(); closeModal(); keepScroll(); toast('Koppeling opgeslagen'); };
+}
+
 function prognosis(){
   const cy=curY(); const st=monthStatus(curYm()); const base=expenseBase(); const baseM=sum(Object.values(base.cats));
   let v=st.total, infF=1, groF=1; const rows=[];
@@ -575,7 +794,7 @@ function prognosis(){
   const fixNow=fixedNowAnnual(), rFix=restM?fixedInMonths(cy,cm+1,12)-fixNow*restM/12:0;
   const rExp=baseM*restM+rFix+rOne, rRet=v*(yp(cy).rend-S.settings.box3)/100*restM/12;
   const rest={months:restM,begin:v,inc:rInc,exp:rExp,oneOff:rOne,fix:rFix,ret:rRet,end:v+rRet+rInc-rExp};
-  v=rest.end;
+  v=rest.end; const useCpi=cpiOn(), fnk=useCpi?fixNowByKey():null;
   for(let y=cy+1;y<=cy+30;y++){
     const p=yp(y); infF*=1+p.infl/100; groF*=1+p.growth/100;
     const incByCat={}, incByPerson={}, incByPC={}, decPC={}; let inc=0;
@@ -585,8 +804,8 @@ function prognosis(){
     const oneOff=sum(S.actuals.filter(a=>a.kind==='uit' && !a.grid && a.monthTotal==null && inY(a.date)).map(a=>+a.amount))
       + sum(S.expected.filter(e=>e.kind==='uit' && inY(lastDay(e.ym))).map(e=>+e.amount));
     const plan=sum(S.planned.filter(x=>+x.year===y).map(x=>x.amount))*infF + oneOff;
-    const fixAdj=(fixedInMonths(y,1,12)-fixNow)*infF;
-    const exp=Math.max(0,baseM*12*infF+fixAdj)+plan;
+    const cpi=useCpi, fixAdj=cpi?cpiFixAdj(y,fnk):(fixedInMonths(y,1,12)-fixNow)*infF;
+    const exp=Math.max(0,(cpi?cpiExpYear(y):baseM*12*infF)+fixAdj)+plan;
     const begin=v; const ret=begin*(p.rend-S.settings.box3)/100;
     v=begin+ret+inc-exp;
     rows.push({y,begin,inc,exp,plan,fixAdj,ret,end:v,infF,incByCat,incByPerson,incByPC,decPC,p});
@@ -597,10 +816,10 @@ function yearRend(acc, y){
   const ov=S.histRend.find(h=>+h.year===+y && h.acc===acc.id);
   if(ov) return {pct:ov.pct/100, eur:null, base:null, manual:true};
   const t=TYPES[acc.type]; const ms=measOf(acc.id);
-  const prevEnd=valueAt(acc.id,(y-1)+'-12-31'); const inYear=ms.filter(m=>m.date.slice(0,4)==String(y));
+  const prevEnd=valueAt(acc.id,y+'-01-01'); const inYear=ms.filter(m=>m.date.slice(0,4)==String(y));
   const startM=prevEnd||inYear[0]; if(!startM) return null;
   if(t.waarde){
-    const endM=valueAt(acc.id,y+'-12-31'); if(!endM||endM===startM) return null;
+    const endM=valueAt(acc.id,(y+1)+'-01-01'); if(!endM||endM===startM) return null;
     const fl=sum(S.flows.filter(f=>f.acc===acc.id && f.date>startM.date && f.date<=endM.date).map(f=>f.amount));
     const e=endM.value-startM.value-fl; const basis=startM.value+Math.max(0,fl);
     return {eur:e, pct:basis>0?e/basis:null, base:basis, partial:endM.date.slice(0,4)==String(curY()) && y==curY(), from:startM.date, to:endM.date};
@@ -808,14 +1027,22 @@ function measForm(acc, m){
     }});
 }
 function flowForm(acc){
-  form({title:'Aankoop of verkoop – '+acc.name, values:{date:todayStr(),dir:'koop'},
-    extra:'<div class="info">Een aankoop is een verschuiving binnen je vermogen, geen uitgave. De app gebruikt dit alleen om het rendement zuiver te berekenen: geld dat je bijstort telt niet als winst.</div>',
+  form({title:'Aankoop of verkoop – '+acc.name,
+    extra:'<div class="info">Een aankoop of verkoop is een verschuiving binnen je vermogen, geen uitgave of inkomst. De app gebruikt het bedrag om het rendement zuiver te berekenen: geld dat je bijstort telt niet als winst, geld dat je eruit haalt niet als verlies.</div>',
     fields:[
       {k:'dir',label:'Soort',type:'select',options:[['koop','Aankoop (geld erbij gestoken)'],['verkoop','Verkoop (geld eruit gehaald)']]},
       {k:'amount',label:'Bedrag (€)',type:'num',req:true},
       {k:'date',label:'Datum',type:'date',req:true},
-      {k:'note',label:'Omschrijving',ph:'Bijv. 2 munten gekocht'}
-    ], onSave:o=>{ S.flows.push({id:uid(),acc:acc.id,date:o.date,amount:(o.dir==='koop'?1:-1)*Math.abs(o.amount),note:o.note}); toast('Opgeslagen. Vergeet niet ook de nieuwe waarde in te voeren.'); }});
+      {k:'note',label:'Omschrijving',ph:'Bijv. 2 munten gekocht'},
+      {k:'upd',label:'Saldo direct bijwerken (laatst bekende waarde ± dit bedrag)',type:'cb'},
+      {k:'all',label:'Alles verkocht: saldo wordt € 0',type:'cb',show:o=>o.dir==='verkoop'}
+    ], values:{date:todayStr(),dir:'koop',upd:true}, onSave:o=>{ const amt=(o.dir==='koop'?1:-1)*Math.abs(o.amount);
+      S.flows.push({id:uid(),acc:acc.id,date:o.date,amount:amt,note:o.note});
+      if(o.upd||(o.dir==='verkoop'&&o.all)){ const prev=valueAt(acc.id,o.date), nv=(o.dir==='verkoop'&&o.all)?0:Math.max(0,Math.round(((prev?prev.value:0)+amt)*100)/100);
+        S.meas=S.meas.filter(m=>!(m.acc===acc.id&&m.date===o.date)); S.meas.push({id:uid(),acc:acc.id,date:o.date,value:nv,at:Date.now()});
+        if(o.dir==='verkoop'&&o.all&&acc.gram) acc.gram=0;
+        toast(nv===0?'Opgeslagen. Saldo is nu € 0. Je kunt de rekening sluiten bij Rekeningen.':'Opgeslagen. Nieuw saldo: '+E2(nv)); }
+      else toast('Opgeslagen. Vergeet niet ook de nieuwe waarde in te voeren.'); }});
 }
 function rateForm(acc){
   form({title:'Rentewijziging – '+acc.name, values:{from:todayStr()},
@@ -968,7 +1195,7 @@ function completeness(st){
 function vOverzicht(){
   const cur=curYm(), st=monthStatus(cur), mo=monthOverview(cur), tr=totalRend(curY());
   const ms=S.meas.map(m=>m.date.slice(0,7)).sort(); const c=ymI(cur);
-  const startI=ms.length?Math.max(ymI(ms[0]),c-35):c-11; const labels=[],tot=[],bes=[],hollow=[];
+  const startI=ms.length?Math.max(ymI(ms[0]),c-35,ymI(showFrom()+'-01')):c-11; const labels=[],tot=[],bes=[],hollow=[];
   for(let i=startI;i<=c;i++){ const ym=iYm(i), s=monthStatus(ym); labels.push(mName(ym)); tot.push(s.known?s.total:null); bes.push(s.known?s.besch:null); if(s.missing.length) hollow.push(i-startI); }
   const l12=[],inc=[],exp=[]; for(let i=c-11;i<=c;i++){ const ym=iYm(i), o=monthOverview(ym); l12.push(mName(ym)); inc.push(o.tIn.geld); exp.push(o.tUit.geld); }
   const ev=calendarEvents().slice(0,8);
@@ -987,7 +1214,7 @@ function vOverzicht(){
 }
 const GOLD_URL='https://goudonline.nl/goudprijs/24-karaat/';
 const goldPctOf = a => (a.goldPct==null||isNaN(a.goldPct)||a.goldPct==='')?100:+a.goldPct;
-const goldAccs = () => S.accounts.filter(a=>a.type==='goud');
+const goldAccs = () => S.accounts.filter(a=>a.type==='goud'&&!a.closed);
 function goldBlock(a){
   const gp=S.settings.goldPrice||{}, price=gp.price, g=+a.gram||0, pc=goldPctOf(a);
   const calc = g ? (price ? `${numIn(g)} g × ${E2(price)} per gram × ${numIn(pc)}% = <b>${E2(g*price*pc/100)}</b>` : `${numIn(g)} g × goudprijs × ${numIn(pc)}%`) : 'Vul via <b>Bewerken</b> het gewicht in gram in, dan berekent de app de waarde uit de goudprijs.';
@@ -1041,8 +1268,8 @@ function maturityOf(a){
 }
 function vrijPlan(H){
   const st=monthStatus(curYm()), today=todayStr(), c=ymI(curYm()), base=expenseBase(), baseM=sum(Object.values(base.cats)), fixNow=fixedNowAnnual();
-  const mats=S.accounts.map(maturityOf).filter(m=>m&&m.amount!=null&&m.date>today).sort((a,b)=>a.date<b.date?-1:1);
-  const inlegNB=sum(S.accounts.filter(a=>!a.besch&&+a.inleg>0&&(!a.endDate||a.endDate>today)).map(a=>+a.inleg));
+  const mats=openAccs().map(maturityOf).filter(m=>m&&m.amount!=null&&m.date>today).sort((a,b)=>a.date<b.date?-1:1);
+  const inlegNB=sum(openAccs().filter(a=>!a.besch&&+a.inleg>0&&(!a.endDate||a.endDate>today)).map(a=>+a.inleg));
   const rsim=expReturnSim(Math.max(1,H));
   let v=st.besch; const rows=[];
   for(let k=0;k<=H;k++){
@@ -1137,8 +1364,8 @@ function regularFlow(ym){
 function avgRate(list,ym){ const w=sum(list.map(a=>(currentOf(a.id)||{}).value||0)); return w?sum(list.map(a=>((currentOf(a.id)||{}).value||0)*rateAt(a,ym+'-01')))/w:0; }
 function cashInterest(months){
   const c=ymI(curYm());
-  const sav=S.accounts.filter(a=>a.besch&&hasRate(a)&&a.type!=='deposito'&&currentOf(a.id));
-  const deps=S.accounts.filter(a=>a.type==='deposito'&&hasRate(a)&&currentOf(a.id));
+  const sav=openAccs().filter(a=>a.besch&&hasRate(a)&&a.type!=='deposito'&&currentOf(a.id));
+  const deps=openAccs().filter(a=>a.type==='deposito'&&hasRate(a)&&currentOf(a.id));
   let cumOut=0, cumSur=0; const out=[];
   for(let k=1;k<=months;k++){ const ym=iYm(c+k), items=futureOutflowItems(ym,k), of=sum(items.map(x=>x.amt));
     const act=deps.filter(a=>!endDateOf(a)||endDateOf(a).slice(0,7)>=ym), rDep=avgRate(act.length?act:deps,ym)||avgRate(sav,ym), rSav=avgRate(sav,ym);
@@ -1150,7 +1377,7 @@ function cashInterest(months){
 const reinvRate = a => { if(a.reinvest!=null && a.reinvest!=='' && !isNaN(a.reinvest)) return +a.reinvest; if(S.settings.reinvestRate!=null) return +S.settings.reinvestRate; return rateAt(a,endDateOf(a)||todayStr()); };
 function expReturnSim(months,scen='mid'){
   const c=ymI(curYm()), from=iYm(c+1), to=iYm(c+months), out=Array.from({length:months},()=>({total:0,byAcc:[],bal:{},ded:{}}));
-  const st=S.accounts.map(a=>{ const cur=currentOf(a.id); if(!cur) return null;
+  const st=openAccs().map(a=>{ const cur=currentOf(a.id); if(!cur) return null;
     return {a,cur,v:cur.value,t:TYPES[a.type],end:endDateOf(a),pm:a.type==='deposito'?payoutMonths(a,from,to):null,done:false}; }).filter(Boolean);
   for(let k=1;k<=months;k++){ const ym=iYm(c+k);
     for(const x of st){ if(x.done) continue; const a=x.a; let amt=0; out[k-1].bal[a.id]=x.v;
@@ -1172,8 +1399,8 @@ function expReturnSim(months,scen='mid'){
 function kortPlan(off=kortOff,count=12){
   const c=ymI(curYm()), today=todayStr(), H=Math.max(0,off+count), st=monthStatus(curYm());
   const hi=histAvg('in'), hu=histAvg('uit');
-  const mats=S.accounts.map(maturityOf).filter(m=>m&&m.amount!=null&&m.date>today);
-  const inlegNB=sum(S.accounts.filter(a=>!a.besch&&+a.inleg>0&&(!a.endDate||a.endDate>today)).map(a=>+a.inleg));
+  const mats=openAccs().map(maturityOf).filter(m=>m&&m.amount!=null&&m.date>today);
+  const inlegNB=sum(openAccs().filter(a=>!a.besch&&+a.inleg>0&&(!a.endDate||a.endDate>today)).map(a=>+a.inleg));
   const sim=expReturnSim(Math.max(1,H)), lost=cashInterest(Math.max(1,H));
   let v=st.total, vr=st.besch; const rows=[];
   for(let k=1;k<=H;k++){
@@ -1317,7 +1544,7 @@ function vInkomen(){
 function vVrij(){
   const pl=vrijPlan(vrijH), rows=pl.rows, minR=rows.reduce((a,r)=>r.end<a.end?r:a,rows[0]);
   const firstNeg=rows.find(r=>r.end<0);
-  const nonBesch=S.accounts.filter(a=>!a.besch);
+  const nonBesch=openAccs().filter(a=>!a.besch);
   const labels=rows.map(r=>mName(r.ym));
   const chart=lineChart({labels,series:[{name:'Verwacht vrij opneembaar tegoed (eind van de maand)',values:rows.map(r=>r.end),color:'#1d5fbf'}],h:260});
   const evRows=rows.filter(r=>r.events.length);
@@ -1370,6 +1597,55 @@ function depositLine(a,cur){
 
   return `<div class="small muted" style="margin-top:8px">${parts.join(' · ')}<div>De rente wordt bijgeschreven op je betaalrekening (geen rente op rente).</div></div>`;
 }
+/* ============ Rekening sluiten, verwijderen en terughalen ============ */
+const openAccs=()=>S.accounts.filter(a=>!a.closed);
+function closeAccForm(acc){
+  const cur=currentOf(acc.id);
+  form({title:'Rekening sluiten – '+acc.name, values:{date:todayStr(),zero:true},
+    extra:`<div class="info">De rekening verdwijnt uit je actuele overzicht, maar de geschiedenis blijft bewaard: tot de sluitdatum telt ze mee in je vermogen per maand, rendement en box 3. Je vindt haar terug onder <b>Gesloten rekeningen</b> en kunt haar daar heropenen.${cur?` Laatst bekend saldo: <b>${E2(cur.value)}</b> (${dNl(cur.date)}).`:''}</div>`,
+    fields:[{k:'date',label:'Sluitdatum',type:'date',req:true},{k:'zero',label:'Saldo op de sluitdatum op € 0 zetten',type:'cb',help:'Aanbevolen. Heb je het geld naar een andere rekening overgemaakt, voer daar dan ook het nieuwe saldo in.'}],
+    onSave:o=>{ if(o.zero){ S.meas=S.meas.filter(m=>!(m.acc===acc.id&&m.date===o.date)); S.meas.push({id:uid(),acc:acc.id,date:o.date,value:0,at:Date.now()}); }
+      acc.closed=o.date; toast('Rekening gesloten. De geschiedenis blijft bewaard.'); }});
+}
+function delAccBox(acc){
+  const n=S.meas.filter(m=>m.acc===acc.id).length, f=S.flows.filter(x=>x.acc===acc.id).length, r=S.interest.filter(x=>x.acc===acc.id).length;
+  const parts=[n&&`${n} saldo${n===1?'':"'s"}`, f&&`${f} aankoop/verkoop${f===1?'':'en'}`, r&&`${r} rente-uitkering${r===1?'':'en'}`].filter(Boolean);
+  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal"><h3>Rekening verwijderen?</h3>
+  <p><b>${esc(acc.name)}</b> verdwijnt helemaal uit de app${parts.length?`, met ${parts.join(', ').replace(/, ([^,]*)$/,' en $1')}`:''}. Ook eerdere maanden en jaren worden opnieuw berekend alsof de rekening nooit heeft bestaan.</p>
+  <p class="small muted">Heeft deze rekening echt bestaan? Kies dan <b>Liever sluiten</b>: dan blijft de geschiedenis bewaard. Verwijderen is bedoeld voor een rekening die per vergissing of dubbel is aangemaakt.</p>
+  <div class="actions"><button class="btn sec" id="dNo">Annuleren</button><span class="spacer"></span>${acc.closed?'':'<button class="btn" id="dClose">Liever sluiten</button>'}<button class="btn danger" id="dYes">Toch verwijderen</button></div></div></div>`;
+  $('#dNo').onclick=closeModal; $('#ov').addEventListener('mousedown',e=>{ if(e.target.id==='ov') closeModal(); });
+  if($('#dClose')) $('#dClose').onclick=()=>{ closeModal(); closeAccForm(acc); };
+  $('#dYes').onclick=()=>{ const id=acc.id; S.accounts=S.accounts.filter(x=>x.id!==id); S.meas=S.meas.filter(m=>m.acc!==id); S.flows=S.flows.filter(x=>x.acc!==id); S.interest=S.interest.filter(x=>x.acc!==id); closeModal(); save(); render(); toast('Rekening verwijderd'); };
+}
+function restoreModal(){
+  const def=todayStr();
+  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal" style="max-width:600px"><h3>Verwijderde rekening terughalen</h3>
+  <p class="small muted">GitHub bewaart elke opgeslagen versie van je gegevens. De app zoekt terug vanaf de gekozen datum (standaard vandaag) naar rekeningen die nu ontbreken, en haalt alleen die rekening terug, met haar saldi, aankopen, verkopen en rente; al je andere gegevens blijven zoals ze nu zijn.</p>
+  <div class="f"><label>Zoeken in versies tot en met</label><input id="rsDate" inputmode="numeric" value="${isoToNl(def)}" placeholder="dd-mm-jjjj"></div>
+  <div id="rsOut" class="small"></div>
+  <div class="actions"><button class="btn sec" id="rsClose">Sluiten</button><span class="spacer"></span><button class="btn" id="rsGo">Zoeken</button></div></div></div>`;
+  $('#rsClose').onclick=closeModal; $('#ov').addEventListener('mousedown',e=>{ if(e.target.id==='ov') closeModal(); });
+  $('#rsGo').onclick=async()=>{ const d=nlToIso($('#rsDate').value), out=$('#rsOut'); if(!d){ toast('Vul de datum in als dd-mm-jjjj'); return; }
+    const have=new Set(S.accounts.map(a=>a.id)), found={}; let scanned=0, firstDate='', lastDate='';
+    out.innerHTML='<p class="muted">Oudere versies doorzoeken…</p>';
+    try{
+      for(let page=1;page<=3;page++){ const list=await histList(d,page); if(!list.length) break;
+        for(const c of list){ scanned++; out.innerHTML=`<p class="muted">Oudere versies doorzoeken… (${scanned})</p>`;
+          const st=await histGet(c.sha); if(!firstDate) firstDate=c.date; lastDate=c.date;
+          for(const a of (st.accounts||[])) if(!have.has(a.id) && !found[a.id]) found[a.id]={a,st,date:c.date};
+          if(Object.keys(found).length && scanned>=10) break; }
+        if(Object.keys(found).length) break; }
+      const F=Object.values(found);
+      if(!F.length){ out.innerHTML=`<p>${scanned?`In ${scanned} versies (tot ${esc(new Date(lastDate).toLocaleDateString('nl-NL'))}) staan geen rekeningen die nu ontbreken. Probeer een eerdere datum.`:'Geen oudere versies gevonden op of vóór die datum.'}</p>`; return; }
+      out.innerHTML='<p>Deze rekeningen ontbreken nu, maar staan in een oudere versie:</p>'+F.map(({a,st,date})=>{ const n=(st.meas||[]).filter(m=>m.acc===a.id).length;
+        return `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><div><b>${esc(a.name)}</b><div class="muted">${esc((TYPES[a.type]||{}).label||a.type)} · ${n} saldo${n===1?'':"'s"} · versie van ${esc(new Date(date).toLocaleString('nl-NL'))}</div></div><span class="spacer"></span><button class="btn sm rsAcc" data-id="${esc(a.id)}">Terughalen</button></div>`; }).join('');
+      out.querySelectorAll('.rsAcc').forEach(b=>b.onclick=()=>{ const id=b.dataset.id, f=found[id]; if(!f||accById(id)) return; const old=f.st;
+        S.accounts.push(f.a);
+        for(const k of ['meas','flows','interest']){ S[k] ||= []; const cur=new Set(S[k].map(x=>x.id)); for(const x of (old[k]||[])) if(x.acc===id && !cur.has(x.id)) S[k].push(x); }
+        save(); render(); toast(f.a.name+' is teruggehaald'); b.disabled=true; b.textContent='Teruggehaald'; });
+    }catch(e){ out.innerHTML=`<p style="color:var(--neg)">${esc(typeof errTxt==='function'?errTxt(e):String(e.message||e))}</p>`; } };
+}
 function vRekeningen(){
   const st=monthStatus(curYm());
   const cardOf=a=>{
@@ -1377,24 +1653,27 @@ function vRekeningen(){
     const fl=S.flows.filter(f=>f.acc===a.id).sort((x,y)=>x.date<y.date?1:-1);
     const rts=(a.rates||[]).slice().sort((x,y)=>x.from<y.from?1:-1), ints=S.interest.filter(x=>x.acc===a.id).sort((x,y)=>x.date<y.date?1:-1);
     const fc=hasRate(a)?savingsForecast(a):null;
-    return `<div class="card acard${openHist[a.id]?' wide':''}"><div class="acc"><div><div class="nm">${esc(a.name)}</div><div class="row small muted" style="gap:6px;margin-top:3px"><span class="badge">${esc(t.label)}</span>${a.besch?'<span class="badge g">direct beschikbaar</span>':'<span class="badge d">vastgezet / niet direct</span>'}${hasRate(a)?`<span>${numIn(rateAt(a,todayStr()))}% rente · ${endOnly(a)?'rente op de einddatum':esc(RFREQ[a.renteFreq]||'')}${a.renteDag?' · '+esc(payoutLabel(a)):''}${a.inleg?' · inleg '+E(a.inleg)+' p/m':''}</span>`:''}</div></div>
+    return `<div class="card acard${openHist[a.id]?' wide':''}"><div class="acc"><div><div class="nm">${esc(a.name)}${a.closed?` <span class="badge w">gesloten ${dNl(a.closed)}</span>`:''}</div><div class="row small muted" style="gap:6px;margin-top:3px"><span class="badge">${esc(t.label)}</span>${a.besch?'<span class="badge g">direct beschikbaar</span>':'<span class="badge d">vastgezet / niet direct</span>'}${hasRate(a)?`<span>${numIn(rateAt(a,todayStr()))}% rente · ${endOnly(a)?'rente op de einddatum':esc(RFREQ[a.renteFreq]||'')}${a.renteDag?' · '+esc(payoutLabel(a)):''}${a.inleg?' · inleg '+E(a.inleg)+' p/m':''}</span>`:''}</div></div>
       <div><div class="v">${cur?E2(cur.value):'<span class="muted" style="font-size:16px">onbekend</span>'}</div><div class="small muted" style="text-align:right">${cur?'peildatum '+dNl(cur.date):'nog geen meting'}</div></div></div>
       ${a.type==='deposito'&&hasRate(a)&&cur?depositLine(a,cur):fc?`<div class="small muted" style="margin-top:8px">Verwachte rente komende 12 maanden: <b>${E(fc.int12)}</b> · verwacht saldo over 12 maanden: <b>${E(fc.rows[11].bal)}</b></div>`:''}
       ${a.type==='goud'?goldBlock(a):''}
-      <div class="row" style="margin-top:12px"><button class="btn sm" data-a="meas" data-id="${a.id}">Saldo invoeren</button>${t.waarde?`<button class="btn sec sm" data-a="flow" data-id="${a.id}">Aankoop / verkoop</button>`:''}${t.rente?`<button class="btn sec sm" data-a="rate" data-id="${a.id}">Rentewijziging</button><button class="btn sec sm" data-a="intr" data-id="${a.id}">Ontvangen rente</button>`:''}<button class="btn ghost sm" data-a="hist" data-id="${a.id}">${openHist[a.id]?'Verberg':'Toon'} geschiedenis (${ms.length})</button><span class="spacer"></span><button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Bewerken</button><button class="btn ghost sm" data-a="delAcc" data-id="${a.id}">Verwijderen</button></div>
+      <div class="row" style="margin-top:12px"><button class="btn sm" data-a="meas" data-id="${a.id}">Saldo invoeren</button>${t.waarde?`<button class="btn sec sm" data-a="flow" data-id="${a.id}">Aankoop / verkoop</button>`:''}${t.rente?`<button class="btn sec sm" data-a="rate" data-id="${a.id}">Rentewijziging</button><button class="btn sec sm" data-a="intr" data-id="${a.id}">Ontvangen rente</button>`:''}<button class="btn ghost sm" data-a="hist" data-id="${a.id}">${openHist[a.id]?'Verberg':'Toon'} geschiedenis (${ms.length})</button><span class="spacer"></span><button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Bewerken</button>${a.closed?`<button class="btn ghost sm" data-a="reopenAcc" data-id="${a.id}">Heropenen</button>`:`<button class="btn ghost sm" data-a="closeAcc" data-id="${a.id}">Sluiten</button>`}<button class="btn ghost sm" data-a="delAcc" data-id="${a.id}">Verwijderen</button></div>
       ${openHist[a.id]?`<div class="tablewrap" style="margin-top:10px"><table><tr><th>Peildatum</th><th class="n">Waarde</th><th></th></tr>${ms.map(m=>`<tr><td>${dNl(m.date)}</td><td class="n">${E2(m.value)}</td><td class="n"><button class="btn ghost sm" data-a="editMeas" data-id="${m.id}">Bewerk</button><button class="btn ghost sm" data-a="delMeas" data-id="${m.id}">✕</button></td></tr>`).join('')}</table>
         ${rts.length?`<h2 style="margin-top:14px;font-size:14px">Rentewijzigingen</h2><table>${rts.map(r=>`<tr><td>vanaf ${dNl(r.from)}</td><td class="n">${numIn(r.pct)}%</td><td class="n"><button class="btn ghost sm" data-a="delRate" data-acc="${a.id}" data-id="${r.id}">✕</button></td></tr>`).join('')}<tr><td class="muted">daarvoor (start)</td><td class="n muted">${numIn(a.rente||0)}%</td><td></td></tr></table>`:''}
         ${ints.length?`<h2 style="margin-top:14px;font-size:14px">Ontvangen rente</h2><table>${ints.map(x=>`<tr><td>${dNl(x.date)}</td><td>${esc(x.note||'')}</td><td class="n">${E2(x.amount)}</td><td class="n"><button class="btn ghost sm" data-a="delInt" data-id="${x.id}">✕</button></td></tr>`).join('')}</table>`:''}
         ${fl.length?`<h2 style="margin-top:14px;font-size:14px">Aankopen en verkopen</h2><table>${fl.map(f=>`<tr><td>${dNl(f.date)}</td><td>${esc(f.note||'')}</td><td class="n">${f.amount>0?'+':''}${E2(f.amount)}</td><td class="n"><button class="btn ghost sm" data-a="delFlow" data-id="${f.id}">✕</button></td></tr>`).join('')}</table>`:''}</div>`:''}
     </div>`;
   };
-  const left=S.accounts.filter(a=>a.type!=='deposito'), right=S.accounts.filter(a=>a.type==='deposito');
-  const cards=S.accounts.length?(right.length&&left.length
+  const OA=openAccs(), CL=S.accounts.filter(a=>a.closed).sort((a,b)=>a.closed<b.closed?1:-1);
+  const left=OA.filter(a=>a.type!=='deposito'), right=OA.filter(a=>a.type==='deposito');
+  const cards=OA.length?(right.length&&left.length
     ? `<div class="acccol"><div class="acchead">Rekeningen en bezittingen</div>${left.map(cardOf).join('')}</div><div class="acccol"><div class="acchead">Deposito's</div>${right.map(cardOf).join('')}</div>`
-    : `<div class="acccol">${S.accounts.map(cardOf).join('')}</div><div class="acccol"></div>`):'';
+    : `<div class="acccol">${OA.map(cardOf).join('')}</div><div class="acccol"></div>`):'';
   return `<div class="row"><div><h1>Rekeningen</h1><p class="sub">Totaal bekend: <b>${E(st.total)}</b> · direct beschikbaar: <b>${E(st.besch)}</b></p></div><span class="spacer"></span><button class="btn" data-a="addAcc">+ Rekening</button></div>${demoBanner()}${completeness(st)}
   <p class="small muted" style="margin:4px 0 12px">Het actuele saldo is de meting met de meest recente peildatum.</p>
-  ${cards?`<div class="accgrid">${cards}</div>`:'<div class="card muted">Nog geen rekeningen. Voeg je eerste rekening toe.</div>'}`;
+  ${cards?`<div class="accgrid">${cards}</div>`:'<div class="card muted">Nog geen (open) rekeningen. Voeg je eerste rekening toe.</div>'}
+  ${CL.length?`<details class="card" style="margin-top:14px" ${window._clOpen?'open':''} ontoggle="window._clOpen=this.open"><summary style="cursor:pointer;font-weight:700">Gesloten rekeningen (${CL.length})</summary><p class="small muted">Deze rekeningen tellen mee in je geschiedenis tot de sluitdatum, maar niet meer in vooruitblikken.</p><div class="accgrid"><div class="acccol">${CL.map(cardOf).join('')}</div><div class="acccol"></div></div></details>`:''}
+  <p class="small muted" style="margin-top:12px">Per ongeluk een rekening verwijderd? <a href="#rekeningen" data-a="restoreAcc">Haal haar terug uit een oudere versie</a>.</p>`;
 }
 function catTable(kind, mo, past){
   const cats=Object.keys(mo[kind]).sort((a,b)=>a===AFS?1:b===AFS?-1:a.localeCompare(b));
@@ -1418,8 +1697,8 @@ function vMaand(){
     </div><div class="small muted" style="margin-top:6px">"Geldend" = per categorie het werkelijke bedrag als dat is ingevuld, anders de verwachting. Vrij beschikbaar eind van de maand: <b>${E(st.besch)}</b>${st.missing.length?' (onvolledig)':''}.</div></div>
   <div class="grid g2"><div class="card"><h2>Inkomsten</h2>${catTable('in',mo,past)}</div><div class="card"><h2>Uitgaven</h2>${catTable('uit',mo,past)}</div></div>
   <div class="card"><h2>Ingevoerd in deze maand</h2>${acts.length||exps.length?`<div class="tablewrap"><table><tr><th>Datum</th><th>Soort</th><th>Categorie</th><th>Omschrijving</th><th class="n">Bedrag</th><th></th></tr>
-    ${acts.map(a=>`<tr><td>${dNl(a.date)}</td><td>${a.kind==='in'?'Inkomst':'Uitgave'}${isInv(a)?` <span class="badge d">investering · ${a.months} mnd</span>`:a.grid?' <span class="badge">maandinvoer</span>':a.regular?' <span class="badge">gewone uitgave</span>':''}</td><td>${esc(a.cat)}${a.sub?' · '+esc(a.sub):''}</td><td>${esc(a.note||'')}</td><td class="n">${E2(a.amount)}</td><td class="n">${a.monthTotal!=null?'<span class="small muted">via Invoeren</span>':`<button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button><button class="btn ghost sm" data-a="delAct" data-id="${a.id}">✕</button>`}</td></tr>`).join('')}
-    ${exps.map(e=>`<tr><td class="muted">verwacht</td><td>${e.kind==='in'?'Inkomst':'Uitgave'} <span class="badge">verwachting</span></td><td>${esc(e.cat)}</td><td>${esc(e.note||'')}</td><td class="n">${E2(e.amount)}</td><td class="n"><button class="btn ghost sm" data-a="editExp" data-id="${e.id}">Bewerk</button><button class="btn ghost sm" data-a="delExp" data-id="${e.id}">✕</button></td></tr>`).join('')}
+    ${acts.map(a=>`<tr><td>${dNl(a.date)}</td><td>${a.kind==='in'?'Inkomst':'Uitgave'}${isInv(a)?` <span class="badge d">investering · ${a.months} mnd</span>`:a.grid?' <span class="badge">maandinvoer</span>':a.regular?' <span class="badge">gewone uitgave</span>':''}</td><td>${esc(a.cat)}${a.sub?' · '+esc(a.sub):''}</td><td>${esc(a.note||'')}</td><td class="n">${E2(a.amount)}</td><td class="n">${a.monthTotal!=null?'<span class="small muted">via Invoeren</span>':`${a.grid?'':attBtn(a)}<button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button><button class="btn ghost sm" data-a="delAct" data-id="${a.id}">✕</button>`}</td></tr>`).join('')}
+    ${exps.map(e=>`<tr><td class="muted">verwacht</td><td>${e.kind==='in'?'Inkomst':'Uitgave'} <span class="badge">verwachting</span></td><td>${esc(e.cat)}</td><td>${esc(e.note||'')}</td><td class="n">${E2(e.amount)}</td><td class="n" style="white-space:nowrap">${e.kind==='uit'?attBtn(e):''}<button class="btn ghost sm" data-a="editExp" data-id="${e.id}">Bewerk</button><button class="btn ghost sm" data-a="delExp" data-id="${e.id}">✕</button></td></tr>`).join('')}
   </table></div>`:'<p class="muted">Nog niets ingevoerd voor deze maand.</p>'}</div>`;
 }
 const gridRec=(ym,cat,sub,kind='uit')=>S.actuals.find(a=>a.grid&&a.monthTotal==null&&a.kind===kind&&a.date.slice(0,7)===ym&&a.cat===cat&&(a.sub||'')===(sub||''));
@@ -1539,13 +1818,13 @@ function vInvoer(){
     <tr class="tot"><td>Totaal ${mode==='exp'?'verwacht ':''}${kind==='uit'?'uitgaven':'inkomsten'} ${mName(ym)}</td>${mode==='act'&&kind==='in'?`<td class="n muted">${E(totalExp)}</td>`:''}<td></td><td></td><td class="n">${E(total)}</td></tr></table></div>
     ${kind==='uit'?`<p class="small muted">"Losse invoer" zijn bedragen die je los hebt ingevoerd via "Werkelijke uitgave" op de pagina Maand. Die tellen bij het maandbedrag op. De afschrijving op investeringen (deze maand ${E(dep)}) komt er in de overzichten nog bij.</p>`:''}</div>
   ${kind==='uit'?`<div class="card"><div class="row"><h2 style="margin:0">Investeringen in ${mName(ym)}</h2><span class="spacer"></span><button class="btn sm" data-a="addAct" data-k="uit">+ Investering</button></div>
-    ${invs.length?`<table style="margin-top:10px"><tr><th>Omschrijving</th><th>Categorie</th><th class="n">Bedrag</th><th class="n">Afschrijving</th><th></th></tr>${invs.map(a=>`<tr><td>${esc(a.note||'')}</td><td>${esc(a.cat)}${a.sub?' · '+esc(a.sub):''}</td><td class="n">${E2(a.amount)}</td><td class="n">${a.months} mnd · ${E2(a.amount/a.months)} p/m</td><td class="n"><button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button><button class="btn ghost sm" data-a="delAct" data-id="${a.id}">✕</button></td></tr>`).join('')}</table>`:`<p class="muted small" style="margin-top:8px">Geen investeringen in deze maand. Uitgaven boven ${E(S.settings.threshold)} voeg je hier toe; ze worden over de door jou gekozen termijn afgeschreven.</p>`}</div>`:''}`;
+    ${invs.length?`<table style="margin-top:10px"><tr><th>Omschrijving</th><th>Categorie</th><th class="n">Bedrag</th><th class="n">Afschrijving</th><th></th></tr>${invs.map(a=>`<tr><td>${esc(a.note||'')}</td><td>${esc(a.cat)}${a.sub?' · '+esc(a.sub):''}</td><td class="n">${E2(a.amount)}</td><td class="n">${a.months} mnd · ${E2(a.amount/a.months)} p/m</td><td class="n" style="white-space:nowrap">${attBtn(a)}<button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button><button class="btn ghost sm" data-a="delAct" data-id="${a.id}">✕</button></td></tr>`).join('')}</table>`:`<p class="muted small" style="margin-top:8px">Geen investeringen in deze maand. Uitgaven boven ${E(S.settings.threshold)} voeg je hier toe; ze worden over de door jou gekozen termijn afgeschreven.</p>`}</div>`:''}`;
 }
 /* ---------- Snelle maandkiezer ---------- */
 const MN=['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'];
 function monthPicker(ym,act,filledFn){
   const y=+ym.slice(0,4), m=ym.slice(5), cy=curY();
-  const firstY=Math.min(2025,...S.actuals.map(a=>+a.date.slice(0,4)),...S.meas.map(x=>+x.date.slice(0,4)));
+  const firstY=Math.min(y,Math.max(showFrom(),Math.min(2025,...S.actuals.map(a=>+a.date.slice(0,4)),...S.meas.map(x=>+x.date.slice(0,4)))));
   const years=[]; for(let i=firstY;i<=cy+30;i++) years.push(i);
   const chips=MN.map((n,i)=>{ const k=y+'-'+pad(i+1); const f=filledFn&&filledFn(k);
     return `<button class="mchip ${f?'f':''} ${k===ym?'on':''} ${k>curYm()?'fut':''} ${k===curYm()?'now':''}" data-a="${act}" data-ym="${k}" title="${mLong(k)}${f?' – ingevuld':''}">${n}</button>`; }).join('');
@@ -1561,7 +1840,7 @@ function anMonths(){
   const c=ymI(curYm());
   const rng=(a,b)=>{ const r=[]; for(let i=a;i<=b;i++) r.push(iYm(i)); return r; };
   const lm=anPer.match(/^last(\d+)$/); if(lm) return rng(c-(+lm[1]),c-1);
-  if(anPer==='all'){ const ms=S.actuals.filter(a=>!isInv(a)).map(a=>ymI(a.date.slice(0,7))); return rng(ms.length?Math.min(...ms):c-12, c); }
+  if(anPer==='all'){ const ms=S.actuals.filter(a=>!isInv(a)).map(a=>ymI(a.date.slice(0,7))); return rng(Math.max(ms.length?Math.min(...ms):c-12, ymI(showFrom()+'-01')), c); }
   if(anPer==='custom'){ let f=ymI(anFrom||iYm(c-12)), t=ymI(anTo||iYm(c-1)); if(f>t) [f,t]=[t,f]; return rng(f,Math.min(t,f+239)); }
   if(anPer==='month') return [anYm||iYm(c-1)];
   const y=+anPer, a=[]; for(let m=1;m<=12;m++){ const ym=y+'-'+pad(m); if(ym<=curYm()) a.push(ym); } return a;
@@ -1619,7 +1898,8 @@ function stackChart({labels,series,h=260,W=760,totals=false,step=0}){
 /* ===== Jaren vergelijken: staven per jaar, taartdiagrammen en vergelijking ===== */
 const SUB_PAL=['#0b2545','#1d5fbf','#5b8fd9','#93b8ea','#3d7cc9','#27496d','#7aa6e0','#c4d8f3','#1a4480','#b0c9ec'];
 function yearMonths(y){ const last=+y===curY()?+curYm().slice(5,7):12; return Array.from({length:last},(_,i)=>y+'-'+pad(i+1)); }
-function yearsWithData(kind){ return [...new Set(S.actuals.filter(a=>a.kind===kind).map(a=>a.date.slice(0,4)))].filter(y=>+y<=curY()).sort(); }
+const showFrom=()=>+(S.settings.showFrom??2025)||0;
+function yearsWithData(kind){ return [...new Set(S.actuals.filter(a=>a.kind===kind).map(a=>a.date.slice(0,4)))].filter(y=>+y<=curY()&&+y>=showFrom()).sort(); }
 function pieChart(items,{size=260,action='',hole=0.55,center=''}={}){
   const tot=sum(items.map(i=>i.value)); if(!tot) return '<p class="muted">Geen bedragen.</p>';
   const R=size/2-4, r0=R*hole, cx=size/2, cy=size/2; let a0=-Math.PI/2, g='';
@@ -1692,9 +1972,10 @@ function yearCompareSection(kind){
     <p class="small muted" style="margin-top:8px">Vink de jaren aan die je wilt vergelijken. ${anPieCat?'Je vergelijkt nu de subcategorieën van <b>'+esc(anPieCat)+'</b>; sluit de categorie rechtsboven om weer alle categorieën te zien.':'Klik op een taartdeel hierboven om de subcategorieën van één categorie te vergelijken.'}</p>
     ${groupedCompare(rows,anCmp)}</div>`;
 }
-function vAnalyse(){
+function vAnalyse(){ return vAnalyse0()+cpiCard(); }
+function vAnalyse0(){
   const kind=anKind, months=anMonths(), d=anData(kind,months), c=ymI(curYm());
-  const years=[...new Set(S.actuals.map(a=>a.date.slice(0,4)))].filter(y=>y<=String(curY())).sort().reverse();
+  const years=[...new Set(S.actuals.map(a=>a.date.slice(0,4)))].filter(y=>y<=String(curY())&&+y>=showFrom()).sort().reverse();
   const nm=Math.max(1,d.filled.length), top=Object.entries(d.cats).sort((a,b)=>b[1].total-a[1].total)[0];
   const list=kind==='uit'?[...S.expCats,AFS]:S.incCats;
   const allCats=[...new Set([...list,...Object.keys(d.cats)])];
@@ -1796,10 +2077,67 @@ function vVast(){
   <div class="card"><div class="row"><h2 style="margin:0">Vaste lasten</h2><span class="spacer"></span><button class="btn sm" data-a="addRec" data-k="uit">+ Vaste last</button></div><div style="margin-top:10px">${tbl('uit')}</div></div>
   <div class="card"><h2>Kalender: wijzigingen en aflopende verplichtingen (komende 12 maanden)</h2><div class="cal">${ev.length?ev.map(e=>`<div class="ev"><div class="dt">${e.yearOnly?e.ym.slice(0,4):mName(e.ym)}</div><div style="flex:1">${esc(e.txt)} <span class="badge ${e.badge==='loopt af'?'w':''}">${esc(e.badge)}</span></div><div class="n ${e.kind==='in'?'pos':''}">${E2(e.amt)}</div></div>`).join(''):'<p class="muted">Geen wijzigingen in de komende 12 maanden.</p>'}</div></div>`;
 }
+/* ============ Bijlagen bij investeringen en grote uitgaven ============ */
+const ATT_KINDS=['Offerte','Factuur','Garantie','Bon','Overig'], ATT_MAX=15*1024*1024;
+let attBusy=0;
+const fmtSize=n=>n>=1048576?numIn(Math.round(n/104857.6)/10)+' MB':Math.max(1,Math.round(n/1024))+' kB';
+function loadImg(file){ return new Promise((res,rej)=>{ const u=URL.createObjectURL(file), im=new Image(); im.onload=()=>{ res(im); setTimeout(()=>URL.revokeObjectURL(u),1000); }; im.onerror=()=>{ URL.revokeObjectURL(u); rej(new Error('img')); }; im.src=u; }); }
+function canvasOf(im,max){ const sc=Math.min(1,max/Math.max(im.naturalWidth,im.naturalHeight)); const c=document.createElement('canvas'); c.width=Math.max(1,Math.round(im.naturalWidth*sc)); c.height=Math.max(1,Math.round(im.naturalHeight*sc)); const x=c.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,c.width,c.height); x.drawImage(im,0,0,c.width,c.height); return c; }
+const canvasBlob=(c,q)=>new Promise(r=>c.toBlob(r,'image/jpeg',q));
+async function attPrepare(file){
+  let bytes, type=file.type||'application/octet-stream', thumb=null, name=file.name||'bestand';
+  if(/^image\//.test(type) && !/gif|svg/.test(type)){
+    try{ const im=await loadImg(file); const big=canvasOf(im,2200), b=await canvasBlob(big,0.82);
+      if(b && b.size<file.size){ bytes=new Uint8Array(await b.arrayBuffer()); type='image/jpeg'; name=name.replace(/\.(heic|heif|png|webp|jpe?g)$/i,'')+'.jpg'; }
+      thumb=canvasOf(im,160).toDataURL('image/jpeg',0.7); }catch(e){}
+  }
+  if(!bytes) bytes=new Uint8Array(await file.arrayBuffer());
+  if(bytes.length>ATT_MAX) throw new Error(`${name} is te groot (${fmtSize(bytes.length)}; maximaal 15 MB)`);
+  const kind=/factuur|invoice|nota/i.test(name)?'Factuur':/offerte|quote/i.test(name)?'Offerte':/garantie/i.test(name)?'Garantie':/bon|kassa|receipt/i.test(name)?'Bon':'Overig';
+  return {bytes, meta:{id:uid()+uid(), name, type, size:bytes.length, kind, date:todayStr(), thumb}};
+}
+const attOwner=id=>S.actuals.find(x=>x.id===id)||S.expected.find(x=>x.id===id);
+function attBtn(a){ const n=(a.att||[]).length; return `<button class="btn ghost sm" data-a="att" data-id="${a.id}" title="Bijlagen: offerte, factuur, enz.">📎${n?' '+n:''}</button>`; }
+function attModal(id){
+  const a=attOwner(id); if(!a) return; a.att ||= [];
+  const ico=m=>m.thumb?`<img src="${m.thumb}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--line)">`:`<div style="width:56px;height:56px;border-radius:6px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--muted)">${/pdf/.test(m.type)?'PDF':'BESTAND'}</div>`;
+  const list=a.att.length?a.att.map(m=>`<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
+    <button class="attview" data-mid="${m.id}" style="border:0;background:none;padding:0;cursor:pointer" title="Bekijken">${ico(m)}</button>
+    <div style="flex:1;min-width:0"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.name)}</div><div class="small muted">${dNl(m.date)} · ${fmtSize(m.size)}</div></div>
+    <select class="attkind" data-mid="${m.id}" style="width:auto">${ATT_KINDS.map(k=>`<option ${k===m.kind?'selected':''}>${k}</option>`).join('')}</select>
+    <button class="btn ghost sm attview" data-mid="${m.id}">Bekijk</button><button class="btn ghost sm attdel" data-mid="${m.id}" title="Verwijderen">✕</button></div>`).join(''):'<p class="muted">Nog geen bijlagen.</p>';
+  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal" style="max-width:640px"><h3>Bijlagen – ${esc(a.note||a.cat||'')}</h3>
+  <p class="small muted">${E2(a.amount)} · ${a.date?dNl(a.date):mLong(a.ym)}. Foto's en pdf's van offertes, facturen, garantiebewijzen en bonnen. Ze worden versleuteld opgeslagen, net als je andere gegevens; foto's worden automatisch verkleind.</p>
+  <div id="attList">${list}</div>
+  <div id="attProg" class="small" style="margin-top:8px"></div>
+  <div class="actions"><label class="btn" style="cursor:pointer">+ Bijlagen toevoegen<input type="file" id="attFile" multiple accept="image/*,application/pdf" style="display:none"></label><span class="spacer"></span><button class="btn sec" id="attClose">Sluiten</button></div>
+  <div id="attPreview"></div></div></div>`;
+  $('#attClose').onclick=()=>{ if(attBusy){ toast('Even wachten: bijlagen worden nog opgeslagen'); return; } closeModal(); keepScroll(); };
+  $('#ov').addEventListener('mousedown',e=>{ if(e.target.id==='ov' && !attBusy){ closeModal(); keepScroll(); } });
+  $('#attFile').onchange=async e=>{ const files=[...e.target.files]; e.target.value=''; if(!files.length) return; const prog=$('#attProg');
+    attBusy++; let ok=0;
+    for(const [i,f] of files.entries()){ prog.textContent=`Bezig met ${i+1} van ${files.length}: ${f.name}…`;
+      try{ const {bytes,meta}=await attPrepare(f); await attPut(meta.id,bytes); a.att.push(meta); ok++; save(); }
+      catch(err){ toast((err&&err.message&&!/^net/.test(err.message))?(typeof errTxt==='function'?errTxt(err):err.message):'Opslaan van '+f.name+' lukt niet'); } }
+    attBusy--; if(ok) toast(ok===1?'Bijlage toegevoegd':ok+' bijlagen toegevoegd'); attModal(id); };
+  $('#modalRoot').querySelectorAll('.attkind').forEach(s=>s.onchange=()=>{ const m=a.att.find(x=>x.id===s.dataset.mid); if(m){ m.kind=s.value; save(); } });
+  $('#modalRoot').querySelectorAll('.attdel').forEach(b=>b.onclick=async()=>{ const m=a.att.find(x=>x.id===b.dataset.mid); if(!m||!confirm('Deze bijlage verwijderen?')) return;
+    a.att=a.att.filter(x=>x!==m); save(); attModal(id); try{ await attDel(m.id); }catch(e){} });
+  $('#modalRoot').querySelectorAll('.attview').forEach(b=>b.onclick=()=>attView(a,b.dataset.mid));
+}
+async function attView(a,mid){
+  const m=(a.att||[]).find(x=>x.id===mid); if(!m) return; const pv=$('#attPreview'); pv.innerHTML='<p class="small muted" style="margin-top:12px">Bijlage ophalen…</p>';
+  try{ const bytes=await attGet(m.id); const url=URL.createObjectURL(new Blob([bytes],{type:m.type}));
+    pv.innerHTML=`<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px"><div class="row" style="margin-bottom:8px"><b style="overflow:hidden;text-overflow:ellipsis">${esc(m.name)}</b><span class="spacer"></span><a class="btn sec sm" href="${url}" target="_blank" rel="noopener">Openen</a> <a class="btn sec sm" href="${url}" download="${esc(m.name)}">Downloaden</a></div>
+    ${/^image\//.test(m.type)?`<img src="${url}" alt="" style="max-width:100%;max-height:60vh;display:block;margin:auto;border-radius:6px">`:/pdf/.test(m.type)?`<iframe src="${url}" title="${esc(m.name)}" style="width:100%;height:60vh;border:1px solid var(--line);border-radius:6px"></iframe>`:'<p class="muted">Gebruik Openen of Downloaden om dit bestand te bekijken.</p>'}</div>`;
+    pv.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }catch(e){ pv.innerHTML=`<p class="small" style="color:var(--neg);margin-top:12px">Bijlage ophalen lukt niet${e&&e.message?': '+esc(typeof errTxt==='function'?errTxt(e):e.message):''}.</p>`; }
+}
+function attDelAll(a){ for(const m of (a&&a.att)||[]) attDel(m.id).catch(()=>{}); }
 function vInvesteringen(){
   const inv=S.actuals.filter(isInv).sort((a,b)=>a.date<b.date?1:-1), c=ymI(curYm());
   const rows=inv.map(a=>{ const s=ymI(a.date.slice(0,7)), n=+a.months, done=Math.min(n,Math.max(0,c-s+1)), per=a.amount/n;
-    return `<tr><td>${esc(a.note||'')}<div class="small muted">${esc(a.cat)}</div></td><td>${dNl(a.date)}</td><td class="n">${E2(a.amount)}</td><td class="n">${n} mnd</td><td class="n">${E2(per)}</td><td class="n">${E(per*done)}</td><td class="n">${E(a.amount-per*done)}</td><td>${done>=n?'<span class="badge g">afgeschreven</span>':done===0?'<span class="badge">start later</span>':`<span class="badge">${done}/${n}</span>`}</td><td class="n"><button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button></td></tr>`; }).join('');
+    return `<tr><td>${esc(a.note||'')}<div class="small muted">${esc(a.cat)}</div></td><td>${dNl(a.date)}</td><td class="n">${E2(a.amount)}</td><td class="n">${n} mnd</td><td class="n">${E2(per)}</td><td class="n">${E(per*done)}</td><td class="n">${E(a.amount-per*done)}</td><td>${done>=n?'<span class="badge g">afgeschreven</span>':done===0?'<span class="badge">start later</span>':`<span class="badge">${done}/${n}</span>`}</td><td class="n" style="white-space:nowrap">${attBtn(a)}<button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button></td></tr>`; }).join('');
   const thisM=sum(inv.map(a=>deprIn(a,curYm())));
   return `<div class="row"><div><h1>Investeringen en afschrijving</h1><p class="sub">Uitgaven boven <b>${E(S.settings.threshold)}</b> (grensbedrag, instelbaar) worden investeringen${S.settings.noInvCats.length?`, behalve in ${S.settings.noInvCats.map(esc).join(', ')}`:''}. Afschrijving deze maand: <b>${E2(thisM)}</b>.</p></div><span class="spacer"></span><button class="btn" data-a="addAct" data-k="uit">+ Investering / uitgave</button></div>${demoBanner()}
 
@@ -1824,8 +2162,8 @@ function expRendCard(){
   sim.forEach((m,k)=>{ const y=+iYm(c+k+1).slice(0,4), yi=yrs.indexOf(y); if(yi<0) return; tot[yi]+=m.total;
     for(const x of m.byAcc){ (per[x.id] ||= yrs.map(()=>0))[yi]+=x.amt; if(rendSure(accById(x.id))&&!x.reinv) sure[yi]+=x.amt; else exp[yi]+=x.amt; } });
   // saldo op 1 januari per rekening: dit jaar = werkelijk (31 dec vorig jaar), later = uit de berekening
-  const accs=S.accounts.filter(a=>currentOf(a.id));
-  const startBal=(a,y)=>{ if(y===cy){ const m=valueAt(a.id,(cy-1)+'-12-31'); if(m) return m.value; if(a.start && a.start>=cy+'-01-01') return 0; const f=measOf(a.id)[0]; return f&&f.date.slice(0,4)<=String(cy)?(f.date>=cy+'-01-01'&&a.start?0:f.value):0; }
+  const accs=openAccs().filter(a=>currentOf(a.id));
+  const startBal=(a,y)=>{ if(y===cy){ const m=valueAt(a.id,cy+'-01-01'); if(m) return m.value; if(a.start && a.start>=cy+'-01-01') return 0; const f=measOf(a.id)[0]; return f&&f.date.slice(0,4)<=String(cy)?(f.date>=cy+'-01-01'&&a.start?0:f.value):0; }
     const k=ymI(y+'-01')-c-1; const r=sim[k]; if(r && r.bal[a.id]!=null) return r.bal[a.id];
     if(a.type==='deposito'&&endDateOf(a)&&endDateOf(a).slice(0,4)<String(y)){ const mt=maturityOf(a); return mt&&mt.amount!=null?mt.amount:(currentOf(a.id)||{}).value||0; }
     return (currentOf(a.id)||{}).value||0; };
@@ -1886,7 +2224,7 @@ function expRendCard(){
     <tr class="muted" title="Inkomsten − uitgaven in dat jaar; gaat naar je spaarrekening"><td class="small">Overschot (inkomsten − uitgaven)</td>${surY.map(v=>A(Math.abs(v)>=1?(v<0?'−':'')+E(Math.abs(v)):'–',v<0?'neg':'')+X()).join('')}</tr>
     ${sumRow(`<span class="muted small">+ Rente over gespaard overschot (rekenstap, ${rS_}%)</span>`,gainY,{sign:'+',cls:'muted',title:`Rekenstap: wat je per maand overhoudt gaat naar je spaarrekening en levert daar rente op (gemiddelde spaarrente ${rS_}%).`})}
     ${sumRow('<b>Verwacht rendement op je vermogen</b>',key,{cls:'tot keyrow',title:'Rente en rendement over het geld dat je echt hebt, als % van je gemiddelde vermogen in dat jaar. Dit cijfer zegt hoe goed je vermogen het doet, los van wat je uitgeeft.'})}
-    <tr title="Verwacht rendement min de inflatie (Instellingen of per jaar bij 30 jaar). Zo zie je of je vermogen echt meer waard wordt."><td>Reëel rendement <span class="small muted">(na inflatie: ${[...new Set(infl)].map(numIn).join(' / ')}%)</span></td>${real.map((v,i)=>A(Math.abs(v)>=1?(v<0?'−':'+')+E(Math.abs(v)):'–',v<0?'neg':'pos')+X(pBase(i)?(v<0?'−':'+')+P(Math.abs(v)/pBase(i)):'')).join('')}</tr>
+    <tr title="Verwacht rendement min de inflatie (Instellingen of per jaar bij 30 jaar). Zo zie je of je vermogen echt meer waard wordt."><td>Reëel rendement <span class="small muted">(na ${cpiOn()?'jouw persoonlijke ':''}inflatie: ${[...new Set(infl.map(x=>Math.round(x*10)/10))].map(numIn).join(' / ')}%)</span></td>${real.map((v,i)=>A(Math.abs(v)>=1?(v<0?'−':'+')+E(Math.abs(v)):'–',v<0?'neg':'pos')+X(pBase(i)?(v<0?'−':'+')+P(Math.abs(v)/pBase(i)):'')).join('')}</tr>
     ${scen?`<tr class="muted"><td class="small" colspan="${1+yrs.length*2}" style="padding-top:12px"><b>Scenario's</b>: verwacht rendement op je vermogen als goud, aandelen en crypto anders uitpakken (in te stellen bij Instellingen)</td></tr>
     ${scRow(`Voorzichtig (beleggingen ${scLow}%)`,key.map((v,i)=>v-tot[i]+scen.low[i]),`Goud, aandelen en crypto leveren ${scLow}% per jaar op. Rente op sparen en deposito's blijft gelijk.`)}
     ${scRow('Neutraal (je eigen verwachting)',key,'Het verwachte rendement dat je per rekening hebt ingesteld.')}
@@ -1905,7 +2243,7 @@ function rememberForecast(list){
 const MIX=[['sparen','Sparen','#1d5fbf'],['betaal','Betaalrekening en contant','#93b8ea'],['deposito',"Deposito's",'#0b2545'],['goud','Goud','#eda100'],['aandelen','Aandelen / beleggingen','#1baf7a'],['crypto','Crypto','#eb6834'],['overig','Overig','#9aa3af']];
 const mixKey=a=>a.type==='spaar'?'sparen':(a.type==='betaal'||a.type==='contant')?'betaal':a.type in {deposito:1,goud:1,aandelen:1,crypto:1}?a.type:'overig';
 function wealthMixCard(){
-  const accs=S.accounts.filter(a=>currentOf(a.id)); if(!accs.length) return '';
+  const accs=openAccs().filter(a=>currentOf(a.id)); if(!accs.length) return '';
   const val={}, ret={}; for(const a of accs){ const k=mixKey(a); val[k]=(val[k]||0)+currentOf(a.id).value; }
   const sim=expReturnSim(12); sim.forEach(m=>{ for(const x of m.byAcc){ const a=accById(x.id); if(a){ const k=mixKey(a); ret[k]=(ret[k]||0)+x.amt; } } });
   const items=MIX.filter(([k])=>val[k]>0).map(([k,n,col])=>({key:k,name:n,value:val[k],color:col}));
@@ -1919,7 +2257,7 @@ function wealthMixCard(){
 }
 function forecastCard(){
   const F=S.rendForecast||{}, cy=curY();
-  const past=Object.keys(F).map(Number).filter(y=>y<cy).sort();
+  const past=Object.keys(F).map(Number).filter(y=>y<cy&&y>=showFrom()).sort();
   const head=`<div class="card"><h2>Verwacht tegenover werkelijk</h2>`;
   if(!past.length){ const nxt=Object.keys(F).map(Number).filter(y=>y>=cy).sort()[0];
     return head+`<p class="small muted">De app onthoudt elk jaar de verwachting die je hierboven ziet (de laatste stand vóór 1 januari). Zodra een jaar voorbij is, staat hier wat je verwachtte naast wat het werkelijk werd. ${nxt?`De eerste vergelijking komt na afloop van <b>${nxt}</b>; de verwachting voor dat jaar staat nu op ${E(F[nxt].eur)}${F[nxt].pct!=null?' ('+P(F[nxt].pct)+')':''}.`:''}</p></div>`; }
@@ -1935,7 +2273,7 @@ const b3Cat=a=>({betaal:'sp',spaar:'sp',deposito:'sp',contant:'sp'}[a.type]||'ov
 function box3Calc(y){
   const P=b3Par(y), cy=curY(), partner=S.settings.box3Partner??(S.settings.people.length>=2), n=partner?2:1;
   const v={sp:0,ov:0}, items=[], missing=[]; let est=false;
-  for(const a of S.accounts){ if(a.noBox3) continue; let m=valueAt(a.id,(y-1)+'-12-31'), val;
+  for(const a of S.accounts){ if(a.noBox3) continue; let m=valueAt(a.id,y+'-01-01'), val;
     if(y>cy){ const c=currentOf(a.id); val=c?c.value:0; est=true; }
     else if(m) val=m.value; else { if(a.start && a.start>=y+'-01-01') continue; const f=measOf(a.id)[0]; if(f && f.date.slice(0,4)<=String(y)){ val=f.value; missing.push(a.name); } else continue; }
     if(!val) continue; const c=b3Cat(a); v[c]+=val; items.push({a,c,val}); }
@@ -1948,12 +2286,12 @@ function box3Calc(y){
   return {y,P,n,v,rg,rend,eff,hv,gr,vrd,tax,real,realTax,realPartial,pay,items,missing,est};
 }
 function box3Card(){
-  const cy=curY(), yrs=[cy-1,cy,cy+1], R=yrs.map(box3Calc);
+  const cy=curY(), yrs=[cy-1,cy,cy+1].filter(y=>y>=showFrom()), R=yrs.map(box3Calc);
   const row=(label,f,cls='',title='')=>`<tr class="${cls}" ${title?`title="${esc(title)}"`:''}><td>${label}</td>${R.map(r=>`<td class="n">${f(r)}</td>`).join('')}</tr>`;
   const pc=x=>numIn(Math.round(x*100)/100)+'%';
   return `<div class="card"><h2>Vermogensbelasting (box 3)</h2><p class="small muted">Een schatting op basis van je saldi op 1 januari (de peildatum). Spaargeld = betaal-, spaar- en depositorekeningen en contant geld; overige bezittingen = aandelen, goud, crypto en overig. Je eigen huis en je hypotheek vallen in box 1 en tellen hier niet mee. ${(S.settings.box3Partner??(S.settings.people.length>=2))?'Gerekend als fiscale partners.':'Gerekend zonder fiscale partner.'} De echte bedragen staan in je aangifte.</p>
   <div style="margin:0 0 12px"><div class="small" style="font-weight:600;margin-bottom:4px">Welke rekeningen tellen mee? <span class="muted" style="font-weight:400">Vinkje aan = telt mee, vinkje uit = telt niet mee.</span></div>
-  <div style="display:flex;flex-wrap:wrap;gap:6px 18px">${S.accounts.map(a=>`<label class="small" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" class="b3acc" data-id="${a.id}" ${a.noBox3?'':'checked'}> ${esc(a.name)} <span class="muted">(${b3Cat(a)==='sp'?'spaargeld':'overige bezitting'})</span></label>`).join('')}</div></div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px 18px">${openAccs().map(a=>`<label class="small" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" class="b3acc" data-id="${a.id}" ${a.noBox3?'':'checked'}> ${esc(a.name)} <span class="muted">(${b3Cat(a)==='sp'?'spaargeld':'overige bezitting'})</span></label>`).join('')}</div></div>
   <div class="tablewrap"><table>
   <tr><th></th>${R.map(r=>`<th class="n">${r.y}${r.y===cy+1?' (schatting)':''}<div class="small muted" style="font-weight:400;text-transform:none">aangifte in ${r.y+1}</div></th>`).join('')}</tr>
   ${row('Spaargeld op 1 januari',r=>E(r.v.sp))}
@@ -1967,11 +2305,11 @@ function box3Card(){
   ${row('Belasting volgens werkelijk rendement',r=>r.realTax==null?'<span class="muted">–</span>':E(r.realTax),'muted')}
   ${row('<b>Te betalen (laagste van de twee)</b>',r=>'<b>'+E(r.pay)+'</b>','tot keyrow')}
   </table></div>
-  ${R.filter(r=>r.missing.length).map(r=>`<p class="small muted">${r.y}: geen saldo op 31 december ${r.y-1} bekend voor ${r.missing.map(esc).join(', ')}. Daarvoor is de eerste bekende waarde gebruikt, dus de schatting is minder precies.</p>`).join('')}
+  ${R.filter(r=>r.missing.length).map(r=>`<p class="small muted">${r.y}: geen saldo op 1 januari ${r.y} (of eerder) bekend voor ${r.missing.map(esc).join(', ')}. Daarvoor is de eerste bekende waarde gebruikt, dus de schatting is minder precies.</p>`).join('')}
   <p class="small muted">Het werkelijke rendement van dit jaar is pas na 31 december bekend; tot die tijd rekent de app met het fictieve rendement. Vanaf ${Math.max(2028,cy+1)} komt er waarschijnlijk een nieuw box 3-stelsel op basis van werkelijk rendement; dan kloppen deze cijfers niet meer.</p></div>`;
 }
 function vRendement(){
-  const years=[...new Set(S.meas.map(m=>+m.date.slice(0,4)).concat(S.histRend.map(h=>+h.year)))].sort(); if(!years.includes(curY())) years.push(curY());
+  const years=[...new Set(S.meas.map(m=>+m.date.slice(0,4)).concat(S.histRend.map(h=>+h.year)))].filter(y=>y>=showFrom()).sort(); if(!years.includes(curY())) years.push(curY());
   const ys=years.slice(-6);
   const cell=r=>r?`${P(r.pct)}${r.manual?' <span class="badge">handmatig</span>':r.received?(r.partial?' <span class="badge g">ontvangen tot nu</span>':' <span class="badge g">ontvangen</span>'):r.expected?' <span class="badge">verwacht</span>':r.calc?' <span class="badge">berekend</span>':r.partial?' <span class="badge w">tot nu</span>':''}${r.eur!=null?`<div class="small muted">${E(r.eur)}</div>`:''}`:'<span class="muted">–</span>';
   return `<div class="row"><div><h1>Rendement</h1><p class="sub">Per rekening en voor het totale vermogen.</p></div><span class="spacer"></span><button class="btn" data-a="addHR">+ Rendement handmatig</button></div>${demoBanner()}
@@ -1981,9 +2319,9 @@ function vRendement(){
   ${forecastCard()}
   ${box3Card()}
   <div class="card"><h2>Rendement tot nu, per jaar</h2><div class="tablewrap"><table><tr><th>Rekening</th>${ys.map(y=>`<th class="n">${y}</th>`).join('')}</tr>
-    ${S.accounts.map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
+    ${S.accounts.map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}${a.closed?' · gesloten '+dNl(a.closed):''}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
     <tr class="tot"><td>Totaal vermogen</td>${ys.map(y=>`<td class="n">${cell(totalRend(y))}</td>`).join('')}</tr></table></div></div>
-  ${S.histRend.length?`<div class="card"><h2>Handmatig ingevoerd</h2><table><tr><th>Jaar</th><th>Rekening</th><th class="n">Rendement</th><th></th></tr>${S.histRend.slice().sort((a,b)=>b.year-a.year).map(h=>`<tr><td>${h.year}</td><td>${h.acc?esc(accById(h.acc)?.name||'(verwijderd)'):'Totaal vermogen'}</td><td class="n">${numIn(h.pct)}%</td><td class="n"><button class="btn ghost sm" data-a="delHR" data-id="${h.id}">✕</button></td></tr>`).join('')}</table></div>`:''}`;
+  ${S.histRend.some(h=>+h.year>=showFrom())?`<div class="card"><h2>Handmatig ingevoerd</h2><table><tr><th>Jaar</th><th>Rekening</th><th class="n">Rendement</th><th></th></tr>${S.histRend.filter(h=>+h.year>=showFrom()).sort((a,b)=>b.year-a.year).map(h=>`<tr><td>${h.year}</td><td>${h.acc?esc(accById(h.acc)?.name||'(verwijderd)'):'Totaal vermogen'}</td><td class="n">${numIn(h.pct)}%</td><td class="n"><button class="btn ghost sm" data-a="delHR" data-id="${h.id}">✕</button></td></tr>`).join('')}</table></div>`:''}`;
 }
 function savingsBlock(){
   const accs=S.accounts.filter(a=>hasRate(a)||(TYPES[a.type].rente&&a.inleg)).map(a=>({a,fc:savingsForecast(a)})).filter(x=>x.fc);
@@ -2033,13 +2371,13 @@ function vPrognose(){
   <div class="grid g2">
     <div class="card"><div class="row"><h2 style="margin:0">Toekomstige aankopen</h2><span class="spacer"></span><button class="btn sm" data-a="addAct" data-k="uit">+ Toevoegen</button></div>
       ${(()=>{ const fut=S.actuals.filter(a=>a.kind==='uit'&&!a.grid&&a.monthTotal==null&&a.date>todayStr()).sort((a,b)=>a.date<b.date?-1:1);
-        return fut.length?`<table style="margin-top:10px"><tr><th>Datum</th><th>Omschrijving</th><th class="n">Bedrag</th><th></th></tr>${fut.map(a=>`<tr><td>${dNl(a.date)}</td><td>${esc(a.note||a.cat)}${a.rep&&a.repYears?` <span class="badge" title="Terugkerende investering">elke ${a.repYears} jaar</span>`:''}</td><td class="n">${E(a.amount)}</td><td class="n" style="white-space:nowrap"><button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Wijzig</button><button class="btn ghost sm" data-a="delAct" data-id="${a.id}" title="Verwijderen">✕</button></td></tr>`).join('')}</table>`:'<p class="muted">Nog geen toekomstige aankopen.</p>'; })()}
+        return fut.length?`<table style="margin-top:10px"><tr><th>Datum</th><th>Omschrijving</th><th class="n">Bedrag</th><th></th></tr>${fut.map(a=>`<tr><td>${dNl(a.date)}</td><td>${esc(a.note||a.cat)}${a.rep&&a.repYears?` <span class="badge" title="Terugkerende investering">elke ${a.repYears} jaar</span>`:''}</td><td class="n">${E(a.amount)}</td><td class="n" style="white-space:nowrap">${attBtn(a)}<button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Wijzig</button><button class="btn ghost sm" data-a="delAct" data-id="${a.id}" title="Verwijderen">✕</button></td></tr>`).join('')}</table>`:'<p class="muted">Nog geen toekomstige aankopen.</p>'; })()}
       <p class="small muted" style="margin-top:8px">Toekomstige aankopen voer je hier in of bij <a href="#investeringen">Investeringen</a>, met de datum waarop je verwacht te betalen. Ze tellen in de prognose volledig mee in dat jaar. Wijzigen of verwijderen kan hier of daar.</p></div>
     <div class="card"><h2>Inkomsten per persoon (eerste jaar, ${curY()+1})</h2>${pr.rows[0]?`<table>${people.map(p=>`<tr><td>${esc(p)}</td><td class="n">${E(R((pr.rows[0].incByPerson[p]||0)/12,pr.rows[0]))} p/m</td></tr>`).join('')||'<tr><td class="muted">Geen vaste inkomsten</td></tr>'}</table>`:''}<p class="small muted">Toekomstige inkomsten per persoon voer je in bij Invoeren → Inkomsten → Verwachting, of bij Vaste posten met een startmaand (bijv. pensioen of AOW).</p></div>
   </div>
-  <div class="card"><h2>Aannames per jaar en uitkomst</h2><p class="small muted">Pas de percentages per jaar aan. Een leeg vakje gebruikt de standaardwaarde uit Instellingen (inflatie ${numIn(S.settings.infl)}%, rendement ${numIn(S.settings.rend)}%, inkomensgroei ${numIn(S.settings.growth)}%).</p>
+  <div class="card"><h2>Aannames per jaar en uitkomst</h2><p class="small muted">Pas de percentages per jaar aan. Een leeg vakje gebruikt de standaardwaarde (inflatie ${cpiOn()?'<b>jouw persoonlijke inflatie</b> (grijs per jaar; zie Analyse). Je hypotheek en andere vaste bedragen stijgen daarbij niet mee':numIn(S.settings.infl)+'% uit Instellingen'}, rendement ${numIn(S.settings.rend)}%, inkomensgroei ${numIn(S.settings.growth)}%).</p>
   <div class="tablewrap"><table><tr><th>Jaar</th><th class="n">Inflatie %</th><th class="n">Rendement %</th><th class="n">Inkomensgroei %</th><th class="n">Begin</th><th class="n">Inkomsten</th><th class="n">Uitgaven</th><th class="n">Rendement</th><th class="n">Eind</th></tr>
-  ${pr.rows.map(r=>{const o=S.years[r.y]||{}; const inp=(k)=>`<input class="cell" data-year="${r.y}" data-key="${k}" inputmode="decimal" value="${o[k]!=null?numIn(o[k]):''}" placeholder="${numIn(S.settings[k])}">`;
+  ${pr.rows.map(r=>{const o=S.years[r.y]||{}; const inp=(k)=>`<input class="cell" data-year="${r.y}" data-key="${k}" inputmode="decimal" value="${o[k]!=null?numIn(o[k]):''}" placeholder="${k==='infl'?numIn(Math.round(baseInfl(r.y)*10)/10):numIn(S.settings[k])}">`;
     return `<tr><td>${r.y}</td><td class="n">${inp('infl')}</td><td class="n">${inp('rend')}</td><td class="n">${inp('growth')}</td><td class="n">${E(R(r.begin,r))}</td><td class="n">${E(R(r.inc,r))}</td><td class="n">${E(R(r.exp,r))}${r.plan?`<div class="small muted">waarvan gepland en investeringen ${E(R(r.plan,r))}</div>`:''}${Math.abs(r.fixAdj)>=1?`<div class="small muted">vaste lasten ${r.fixAdj<0?'lager':'hoger'} dan nu: ${r.fixAdj<0?'−':'+'}${E(Math.abs(R(r.fixAdj,r)))}</div>`:''}</td><td class="n">${E(R(r.ret,r))}</td><td class="n ${r.end<0?'neg':''}"><b>${E(R(r.end,r))}</b></td></tr>`;}).join('')}</table></div></div>`;
 }
 function catUsage(kind,cat,sub){
@@ -2110,6 +2448,7 @@ function vInstellingen(){
       <div class="f"><label>Standaard inkomensgroei per jaar (%)</label><input id="s_growth" inputmode="decimal" value="${numIn(s.growth)}"></div>
       <div class="f"><label>Vermogensbelasting (box 3), % van het vermogen per jaar</label><input id="s_box3" inputmode="decimal" value="${numIn(s.box3)}"><div class="help">Standaard 0. Wordt in de prognose van het rendement afgetrokken. Bij Rendement zie je wat je werkelijk ongeveer betaalt.</div></div>
       <div class="f cb"><label><input type="checkbox" id="s_b3partner" ${(s.box3Partner??(s.people.length>=2))?'checked':''}> Fiscale partners (dubbel heffingsvrij vermogen in box 3)</label></div>
+      <div class="f"><label>Toon jaren vanaf</label><input id="s_showFrom" inputmode="numeric" value="${s.showFrom??2025}"><div class="help">Oudere jaren worden niet getoond in overzichten en grafieken. Je gegevens blijven bewaard.</div></div>
       <div class="f"><label>Herbeleggen na afloop van een deposito: rente (%)</label><input id="s_reinv" inputmode="decimal" value="${s.reinvestRate==null?'':numIn(s.reinvestRate)}" placeholder="leeg = dezelfde rente als de deposito"><div class="help">Voor het verwachte rendement: na de einddatum rekent de app alsof je het geld opnieuw vastzet tegen dit percentage. Leeg = dezelfde rente als de deposito. 0 = niet herbeleggen. Per deposito kun je dit bij Bewerken aanpassen.</div></div>
       <div class="f"><label>Scenario voorzichtig: rendement beleggingen, goud en crypto (%)</label><input id="s_scenLow" inputmode="decimal" value="${numIn(s.scenLow??0)}"></div>
       <div class="f"><label>Scenario gunstig: extra bovenop het verwachte rendement (%-punt)</label><input id="s_scenHigh" inputmode="decimal" value="${numIn(s.scenHigh??3)}"></div>
@@ -2151,7 +2490,8 @@ const HELP={
   <p><b>Saldo invoeren:</b> het saldo op een peildatum. Het actuele saldo is altijd de meting met de nieuwste peildatum.</p>
   <p><b>Spaarrekening:</b> verwachte rente = saldo × rentepercentage, met rente op rente. <i>Voorbeeld:</i> €56.883 × 3,11% ≈ €1.770 per jaar; met wekelijkse uitkering iets meer (≈ €1.795).</p>
   <p><b>Deposito:</b> de rente gaat naar je betaalrekening (geen rente op rente). Met een uitkeringsdatum komt de rente op die datums; zonder uitkeringsdatum in één keer op de einddatum. De einddatum vult de app zelf in uit de looptijd in de naam ("Deposito 3 jaar") en de openingsdatum, of je vult hem zelf in. <i>Voorbeeld:</i> €50.000 × 2,45% = €1.225 per jaar.</p>
-  <p><b>Goud:</b> gewicht in gram × goudprijs per gram × percentage. <i>Voorbeeld:</i> 62,2 g × €112,50 × 95% = €6.647.</p>`],
+  <p><b>Goud:</b> gewicht in gram × goudprijs per gram × percentage. <i>Voorbeeld:</i> 62,2 g × €112,50 × 95% = €6.647.</p>
+  <p><b>Aankoop / verkoop:</b> het saldo wordt direct bijgewerkt met het bedrag (uit te zetten). Bij "Alles verkocht" wordt het saldo € 0.</p><p><b>Sluiten</b> bewaart de geschiedenis: tot de sluitdatum telt de rekening mee in je vermogen, rendement en box 3; je vindt haar onder Gesloten rekeningen. <b>Verwijderen</b> haalt alles weg, ook uit het verleden. Per ongeluk verwijderd? Onderaan de pagina kun je een rekening terughalen uit een oudere versie (GitHub bewaart elke versie).</p>`],
  kort:['Komende maanden',`<p>Je vermogen per maand. Grijze kolommen zijn <b>werkelijk</b> (uit Invoeren en je saldi), witte kolommen zijn de <b>verwachting</b>. Scroll de tabel onbeperkt naar links of rechts.</p>
   <p><b>Per maand:</b> vermogen begin + inkomsten + incidentele inkomsten − uitgaven − incidentele uitgaven − investeringen ± rendement = vermogen eind.</p>
   <ul><li><b>Inkomsten:</b> volgens Inkomen plannen (of het gemiddelde van de laatste 12 maanden, met de knop).</li>
@@ -2176,7 +2516,9 @@ const HELP={
  maand:['Maand',`<p>Eén maand in detail: verwachte en werkelijke bedragen naast elkaar. Ze worden nooit bij elkaar opgeteld.</p><p>Verwacht komt uit Inkomen plannen, Vaste posten en verwachtingen; werkelijk uit Invoeren. Afschrijving van investeringen staat als aparte categorie.</p>`],
  analyse:['Analyse',`<p>Waar het geld naartoe gaat en waar het vandaan komt, op basis van je werkelijke bedragen.</p>
   <ul><li><b>Per jaar:</b> klik op een staaf om dat jaar te kiezen.</li><li><b>Taartdiagram:</b> klik op een categorie voor de subcategorieën; bij Afschrijving zie je de investeringen.</li><li><b>Jaren vergelijken:</b> vink jaren aan om categorieën of subcategorieën naast elkaar te zetten.</li></ul>
-  <p>Het lopende jaar telt tot en met de huidige maand.</p>`],
+  <p>Het lopende jaar telt tot en met de huidige maand.</p>
+  <p><b>Jouw persoonlijke inflatie</b> (onderaan): de app haalt elke twee weken de prijsstijging per categorie op bij het CBS (jaarmutatie van de consumentenprijsindex). Per categorie: jouw aandeel in de uitgaven van de laatste 12 maanden × de prijsstijging = bijdrage. Alle bijdragen samen zijn jouw inflatie. <i>Voorbeeld:</i> boodschappen zijn 18% van je uitgaven en worden 3,4% duurder: 0,18 × 3,4 = 0,61 procentpunt.</p>
+  <ul><li><b>Categorieën koppelen:</b> de app stelt per categorie een CBS-categorie voor; je kunt dat aanpassen of een eigen percentage invullen.</li><li><b>Hypotheek:</b> telt niet mee (het CBS ziet een koopwoning als investering) en blijft in de 30-jaarsplanning gelijk.</li><li><b>Investeringen:</b> een auto telt mee met de afschrijving per maand (aanschaf van voertuigen); andere investeringen standaard niet.</li><li><b>Langjarig gemiddelde:</b> de gemiddelde prijsstijging per categorie over de laatste 10 jaar, gewogen naar jouw uitgaven. Die gebruikt de 30-jaarsplanning, zodat één uitschieter (zoals energie in 2022) de prognose niet verstoort.</li></ul>`],
  vast:['Vaste posten',`<p>Je vaste lasten zitten al in je werkelijke uitgaven, en daarmee in de planning (gemiddelde van de laatste 24 maanden). Je hoeft ze hier niet allemaal in te vullen.</p>
   <p>Gebruik deze pagina voor vaste lasten die <b>in de toekomst stoppen, beginnen of veranderen</b>: een lening of lease met einddatum, een premie die op een leeftijd stopt, reiskosten die stoppen bij pensioen, een nieuwe verzekering.</p>
   <p><b>Berekening:</b> de app kijkt alleen naar het <b>verschil met nu</b>. <i>Voorbeeld:</i> uitgaven €3.000 per maand inclusief €1.000 hypotheek die eind 2030 stopt → tot 2030 €3.000, vanaf 2031 €2.000 per maand (plus inflatie). Een vaste last die gewoon doorloopt verandert niets, dus er telt niets dubbel.</p>
@@ -2184,7 +2526,8 @@ const HELP={
  investeringen:['Investeringen',`<p>Grote aankopen boven het grensbedrag. De <b>betaling</b> zie je terug in je saldi; de <b>afschrijving</b> verdeelt de kosten over de maanden.</p>
   <p><i>Voorbeeld:</i> een vloer van €15.000 over 15 jaar = €83 per maand afschrijving in het maandoverzicht en bij Analyse.</p>
   <p><b>Toekomstige aankoop:</b> vul de datum en het verwachte bedrag in. In de 30-jaarsplanning, Komende maanden en Vrij geld telt die volledig mee in de maand van betaling (zonder afschrijving).</p>
-  <p><b>Herhalen:</b> bijvoorbeeld elke 8 jaar een auto, met een prijsstijging per jaar. Pas je een herhaling aan, dan worden de latere opnieuw berekend.</p>`],
+  <p><b>Herhalen:</b> bijvoorbeeld elke 8 jaar een auto, met een prijsstijging per jaar. Pas je een herhaling aan, dan worden de latere opnieuw berekend.</p>
+  <p><b>Bijlagen (📎):</b> voeg foto's of pdf's toe van offertes, facturen, garantiebewijzen en bonnen. Ze worden versleuteld opgeslagen in je privé-repository (map bijlagen), net als je andere gegevens. Foto's worden automatisch verkleind; maximaal 15 MB per bestand.</p>`],
  rendement:['Rendement',`<p><b>Verwacht rendement komende jaren</b>, per rekening:</p>
   <ul><li><span class="badge g">zeker</span> <b>Deposito's:</b> vaste rente op de uitkeringsdatum of de einddatum; de rente gaat naar je betaalrekening (geen rente op rente). <i>Voorbeeld:</i> €6.000 × 2,5% over 2 jaar = €300, alleen in het jaar van de einddatum.</li>
   <li><span class="badge">verwacht</span> <b>Spaarrekeningen:</b> het ingestelde (variabele) rentepercentage, met rente op rente.</li>
@@ -2203,6 +2546,7 @@ const HELP={
   <li><b>Inkomsten:</b> volgens Inkomen plannen, met de inkomensgroei erbij; salaris stopt op de stopdatum uit Instellingen.</li>
   <li><b>Uitgaven:</b> gemiddelde van de werkelijke uitgaven over de laatste 24 maanden, met inflatie, plus wijzigingen in vaste lasten (Vaste posten), plus toekomstige aankopen in het jaar van betaling.</li>
   <li><b>Rendement:</b> het percentage uit Instellingen (of per jaar in de tabel) over het vermogen aan het begin van het jaar.</li>
+  <li><b>Persoonlijke inflatie:</b> staat het vinkje bij Analyse aan, dan groeit elke uitgavencategorie met haar eigen langjarige prijsstijging van het CBS, en blijven je hypotheek en andere vaste bedragen gelijk. Het grijze percentage in de tabel is jouw verwachte inflatie voor dat jaar; een ingevuld percentage geldt voor alles in dat jaar.</li>
   <li><b>Euro's van nu:</b> corrigeert alles voor inflatie. Inkomen dat minder groeit dan de inflatie daalt dan; uitgaven blijven gelijk.</li></ul>
   <p><i>Voorbeeld:</i> €300.000 begin + 4% rendement (€12.000) + €60.000 inkomsten − €70.000 uitgaven (incl. een auto) = €302.000: het vermogen stijgt toch, omdat het rendement het tekort goedmaakt.</p>`],
  instellingen:['Instellingen',`<p>Categorieën, standaardaannames (inflatie, rendement, inkomensgroei, grensbedrag investeringen), personen met geboortedatum en stopdatum, en je gegevens (back-up).</p>
@@ -2215,6 +2559,7 @@ function helpModal(){
 }
 function addHelpBtn(){ const h1=document.querySelector('#main h1'); if(h1 && HELP[view] && !h1.querySelector('.helpbtn')) h1.insertAdjacentHTML('beforeend',' <button class="helpbtn" data-a="help" title="Uitleg bij deze pagina" aria-label="Uitleg">?</button>'); }
 function render(){
+  _cpiMemo=null; _cpiRowsMemo=null;
   view=(location.hash.slice(1)||'overzicht'); if(!VIEWS.some(v=>v[0]===view)) view='overzicht';
   renderNav();
   const fn={kort:vKort,inkomen:vInkomen,vrij:vVrij,analyse:vAnalyse,invoer:vInvoer,overzicht:vOverzicht,rekeningen:vRekeningen,maand:vMaand,vast:vVast,investeringen:vInvesteringen,rendement:vRendement,prognose:vPrognose,instellingen:vInstellingen}[view];
@@ -2234,7 +2579,10 @@ document.addEventListener('click',e=>{
   switch(a){
     case 'addAcc': accountForm(); break;
     case 'editAcc': accountForm(acc); break;
-    case 'delAcc': confirmBox(`De rekening <b>${esc(acc.name)}</b> en alle metingen ervan worden verwijderd.`,()=>{ S.accounts=S.accounts.filter(x=>x.id!==id); S.meas=S.meas.filter(m=>m.acc!==id); S.flows=S.flows.filter(f=>f.acc!==id); S.interest=S.interest.filter(x=>x.acc!==id); }); break;
+    case 'delAcc': delAccBox(acc); break;
+    case 'closeAcc': closeAccForm(acc); break;
+    case 'reopenAcc': confirmBox(`<b>${esc(acc.name)}</b> wordt weer een open rekening. Voer daarna het actuele saldo in.`,()=>{ delete acc.closed; toast('Rekening heropend'); },'Heropenen'); break;
+    case 'restoreAcc': e.preventDefault&&e.preventDefault(); restoreModal(); break;
     case 'goldUpd': { const inp=document.querySelector(`.goldPrice[data-id="${id}"]`)||document.querySelector('.goldPrice'); const price=parseNum(inp?inp.value:'');
       if(!(price>0)){ toast('Vul een geldige goudprijs per gram in'); inp&&inp.focus(); break; }
       const d=todayStr(); S.settings.goldPrice={price,date:d}; let n=0, miss=0;
@@ -2282,12 +2630,15 @@ document.addEventListener('click',e=>{
     case 'mNext': selYm=iYm(ymI(selYm||curYm())+1); render(); break;
     case 'addAct': actualForm(k,null,view==='maand'?selYm:view==='invoer'?invYm():null); break;
     case 'editAct': { const x=S.actuals.find(z=>z.id===id); actualForm(x.kind,x); break; }
-    case 'delAct': del('actuals','Dit bedrag wordt verwijderd.'); break;
+    case 'delAct': { const x=S.actuals.find(z=>z.id===id); confirmBox('Dit bedrag wordt verwijderd.'+((x&&x.att&&x.att.length)?` De ${x.att.length===1?'bijlage wordt':x.att.length+' bijlagen worden'} ook verwijderd.`:''),()=>{ attDelAll(x); S.actuals=S.actuals.filter(z=>z.id!==id); }); break; }
+    case 'att': attModal(id); break;
     case 'addExp': expectedForm(null,selYm); break;
     case 'editExp': expectedForm(S.expected.find(z=>z.id===id)); break;
-    case 'delExp': del('expected','Deze verwachting wordt verwijderd.'); break;
+    case 'delExp': { const x=S.expected.find(z=>z.id===id); confirmBox('Deze verwachting wordt verwijderd.'+((x&&x.att&&x.att.length)?' De bijlagen worden ook verwijderd.':''),()=>{ attDelAll(x); S.expected=S.expected.filter(z=>z.id!==id); }); break; }
     case 'addRec': recurringForm(k); break;
     case 'help': helpModal(); break;
+    case 'cpiMap': cpiMapModal(); break;
+    case 'cpiFetch': cpiFetch(true); break;
     case 'kortOff': kortOff=(+b.dataset.d===0)?0:kortOff+(+b.dataset.d); keepScroll(); break;
     case 'kortInc': kortInc=b.dataset.v; keepScroll(); break;
     case 'incOnce': onceForm(b.dataset.p||''); break;
@@ -2307,6 +2658,7 @@ document.addEventListener('click',e=>{
       const rv=$('#s_reinv').value.trim(); S.settings.reinvestRate=rv===''?null:parseNum(rv); if(rv!==''&&isNaN(S.settings.reinvestRate)){ toast('Controleer het herbeleggingspercentage'); return; }
       const sl=parseNum($('#s_scenLow').value), sh=parseNum($('#s_scenHigh').value); if(!isNaN(sl)) S.settings.scenLow=sl; if(!isNaN(sh)) S.settings.scenHigh=sh;
       S.settings.box3Partner=$('#s_b3partner').checked;
+      { const sf=parseInt($('#s_showFrom').value,10); if(!isNaN(sf)&&sf>1990&&sf<=curY()) S.settings.showFrom=sf; else { toast('Vul bij "Toon jaren vanaf" een jaartal in'); return; } }
       Object.assign(S.settings,vals); S.settings.people=$('#s_people').value.split(',').map(x=>x.trim()).filter(Boolean); save(); render(); toast('Instellingen opgeslagen'); break; }
     case 'catAdd': { const k=b.dataset.kind, el=$('#newCat_'+k), nm=el.value.trim(), list=k==='uit'?S.expCats:S.incCats;
       if(!nm) { el.focus(); return; } if(nm===AFS||list.includes(nm)){ toast('Die categorie bestaat al'); return; }
@@ -2344,6 +2696,7 @@ document.addEventListener('change',e=>{
   if(t.classList.contains('pfield')){ const v=nlToIso(t.value); if(v===null){ toast('Vul de datum in als dd-mm-jjjj, bijvoorbeeld 10-09-1963'); t.focus(); return; }
     const P=(S.settings.persons ||= {}); const o=(P[t.dataset.p] ||= {}); if(v) o[t.dataset.k]=v; else delete o[t.dataset.k]; save(); keepScroll(); toast(v?'Opgeslagen: '+dNl(v):'Datum gewist'); return; }
   if(t.classList.contains('b3acc')){ const a=accById(t.dataset.id); if(a){ if(t.checked) delete a.noBox3; else a.noBox3=true; save(); keepScroll(); toast(a.name+(t.checked?': telt mee voor box 3':': telt niet mee voor box 3')); } return; }
+  if(t.id==='cpiUse'){ S.settings.cpiUse=t.checked; _cpiMemo=null; save(); keepScroll(); toast(t.checked?'Persoonlijke inflatie wordt gebruikt':'Vaste inflatie uit Instellingen wordt gebruikt'); return; }
   if(t.id==='aowLater'){ S.settings.aowLater=+t.value; save(); keepScroll(); toast('Opgeslagen'); return; }
   if(t.classList.contains('workcat')){ S.settings.workCats=[...document.querySelectorAll('.workcat:checked')].map(x=>x.value); save(); toast('Opgeslagen'); return; }
   if(t.classList.contains('noinv1')){ const c=t.dataset.cat; S.settings.noInvCats=S.settings.noInvCats.filter(x=>x!==c); if(t.checked) S.settings.noInvCats.push(c); save(); toast(t.checked?c+': nooit een investering':c+': uitgaven boven het grensbedrag worden weer investeringen'); return; }
