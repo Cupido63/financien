@@ -220,13 +220,15 @@ function isDateS(d){ return /^\d{4}-\d{2}-\d{2}$/.test(d||''); }
 function fixYear(y){ y=+y; return y<100 ? (y>40?1900+y:2000+y) : y; }
 function nlToIso(s){ s=String(s||'').trim(); if(!s) return '';
   if(/^vandaag$/i.test(s)) return todayStr();
-  let m=s.match(/^(\d{1,2})[-\/. ](\d{1,2})[-\/. ](\d{2}|\d{4})$/) || s.match(/^(\d{2})(\d{2})(\d{4}|\d{2})$/); if(!m) return null;
+  let m=s.match(/^(\d{1,2})[-\/. ](\d{1,2})[-\/. ](\d{2}|\d{4})$/) || s.match(/^(\d{2})(\d{2})(\d{4}|\d{2})$/) || s.replace(/[^\d]/g,'').match(/^(\d{2})(\d{2})(\d{4})$/); if(!m) return null;
   const d=+m[1], mo=+m[2], y=fixYear(m[3]); const t=new Date(y,mo-1,d); if(t.getFullYear()!==y||t.getMonth()!==mo-1||t.getDate()!==d) return null;
   return y+'-'+pad(mo)+'-'+pad(d); }
 function nlToYm(s){ s=String(s||'').trim(); if(!s) return '';
   let m=s.match(/^(\d{1,2})[-\/. ](\d{2}|\d{4})$/) || s.match(/^(\d{2})(\d{4})$/); if(!m) return null;
   const mo=+m[1], y=fixYear(m[2]); if(mo<1||mo>12) return null; return y+'-'+pad(mo); }
 function autoMask(el){ const isM=el.classList.contains('mnl'); const raw=el.value; if(/[a-z]/i.test(raw)) return;
+  /* Alleen streepjes toevoegen tijdens het gewoon doortypen aan het eind. Verbeter je iets in het midden, dan laat de app je tekst en cursor met rust. */
+  const pos=el.selectionStart; if(pos!=null && pos<raw.length) return;
   const ours = isM ? /^\d*$|^\d{2}-\d*$/ : /^\d*$|^\d{2}-\d*$|^\d{2}-\d{2}-\d*$/; if(!ours.test(raw)) return;
   const dg=raw.replace(/\D/g,'').slice(0,isM?6:8); let out=dg;
   if(isM){ if(dg.length>2) out=dg.slice(0,2)+'-'+dg.slice(2); }
@@ -1012,9 +1014,9 @@ function accountForm(a){
   }});
   if(isNew){ const sel=$('#f_type'); sel.addEventListener('change',()=>{ $('#f_besch').checked=!!TYPES[sel.value].besch; }); }
 }
-function measForm(acc, m){
+function measForm(acc, m, defDate){
   const isNew=!m; const cur=currentOf(acc.id);
-  form({title:(isNew?'Saldo invoeren':'Meting bewerken')+' – '+acc.name, values:m||{date:todayStr()},
+  form({title:(isNew?'Saldo invoeren':'Meting bewerken')+' – '+acc.name, values:m||{date:defDate||todayStr()},
     extra: cur?`<div class="info">Huidige waarde: <b>${E2(cur.value)}</b> (peildatum ${dNl(cur.date)})</div>`:'',
     fields:[
       {k:'value',label:TYPES[acc.type].waarde?'Actuele waarde (€)':'Saldo (€)',type:'num',req:true},
@@ -1449,7 +1451,9 @@ function flowBars(rows){
 
 /* Tabel per maand: onbeperkt horizontaal scrollen (verleden en toekomst) */
 let kTabFrom=-13, kTabN=37;
+const kMinOff=()=>ymI(showFrom()+'-01')-ymI(curYm())-1;
 function kortTableHtml(){
+  const mo=kMinOff(); if(kTabFrom<mo){ kTabN=Math.max(1,kTabN-(mo-kTabFrom)); kTabFrom=mo; }
   const rows=kortPlan(kTabFrom,kTabN).rows, cy_=curYm();
   const tip=list=>esc(list.map(x=>x.txt+': '+E(x.amt)).join('\n'));
   const cell=(v,sign,list)=>`<td class="n ${v&&sign<0?'neg':v&&sign>0?'pos':''}" ${list&&list.length?`title="${tip(list)}" style="cursor:help;text-decoration:underline dotted"`:''}>${v?(sign<0?'−':sign>0?'+':'')+E(Math.abs(v)):''}</td>`;
@@ -1472,7 +1476,7 @@ function kortAfter(first){
   if(w._bound) return; w._bound=true;
   let busy=false;
   w.addEventListener('scroll',()=>{ if(busy) return;
-    if(w.scrollLeft<120){ busy=true; const before=w.scrollWidth; kTabFrom-=12; kTabN+=12; w.innerHTML=kortTableHtml(); w.scrollLeft+=w.scrollWidth-before; busy=false; }
+    if(w.scrollLeft<120 && kTabFrom>kMinOff()){ busy=true; const before=w.scrollWidth; const st=Math.min(12,kTabFrom-kMinOff()); kTabFrom-=st; kTabN+=st; w.innerHTML=kortTableHtml(); w.scrollLeft+=w.scrollWidth-before; busy=false; }
     else if(w.scrollLeft+w.clientWidth>w.scrollWidth-120){ busy=true; kTabN+=12; const sl=w.scrollLeft; w.innerHTML=kortTableHtml(); w.scrollLeft=sl; busy=false; } },{passive:true});
 }
 function vKort(){
@@ -1646,6 +1650,26 @@ function restoreModal(){
         save(); render(); toast(f.a.name+' is teruggehaald'); b.disabled=true; b.textContent='Teruggehaald'; });
     }catch(e){ out.innerHTML=`<p style="color:var(--neg)">${esc(typeof errTxt==='function'?errTxt(e):String(e.message||e))}</p>`; } };
 }
+/* Vermogen per maand, per rekening: welke saldi (en van welke datum) tellen mee in de stand aan het eind van elke maand */
+function accMonthCard(){
+  const from=ymI(showFrom()+'-01'), to=ymI(curYm()); if(to<from) return '';
+  const accs=S.accounts.filter(a=>!a.closed || a.closed>=showFrom()+'-01');
+  if(!accs.length) return '';
+  const months=[]; for(let i=to;i>=from;i--) months.push(iYm(i));
+  const sd=d=>{ const [y,m,dd]=d.split('-'); return +dd+' '+MN[+m-1]+(y.slice(2)!==''?' '+y.slice(2):''); };
+  const rows=months.map(ym=>{ const end=iYm(ymI(ym)+1)+'-01'; let tot=0, miss=0;
+    const cells=accs.map(a=>{
+      if(a.start && a.start>end) return `<td class="n muted small">nog niet geopend</td>`;
+      if(a.closed && a.closed<=end) return `<td class="n muted small">gesloten</td>`;
+      const m=valueAt(a.id,end); const ld=lastDay(ym);
+      if(!m){ miss++; return `<td class="n"><button class="btn ghost sm" data-a="meas" data-id="${a.id}" data-date="${ld}" title="Saldo invoeren voor eind ${mLong(ym)}" style="color:#c0392b !important">onbekend ✎</button></td>`; }
+      tot+=m.value; const old=m.date<=ym+'-01' && a.type!=='deposito';
+      return `<td class="n" ${old?`title="Geen saldo in ${mLong(ym)}: het laatst bekende saldo (${dNl(m.date)}) is gebruikt. Klik op de datum om een saldo in te voeren."`:`title="Saldo van ${dNl(m.date)}"`}>${E(m.value)}<div class="small ${old?'':'muted'}" style="${old?'color:#b26b00':''}">${old?`<button class="btn ghost sm" data-a="meas" data-id="${a.id}" data-date="${ld}" style="padding:0;color:#b26b00">${sd(m.date)} ✎</button>`:sd(m.date)}</div></td>`; });
+    return `<tr><th style="text-align:left;white-space:nowrap;position:sticky;left:0;background:#f3f6fa;z-index:1">${MN[+ym.slice(5)-1]} ${ym.slice(0,4)}</th>${cells.join('')}<td class="n"><b>${E(tot)}</b>${miss?`<div class="small" style="color:var(--neg)">${miss} onbekend</div>`:''}</td></tr>`; }).join('');
+  return `<details class="card" style="margin-top:14px" ${window._amOpen?'open':''} ontoggle="window._amOpen=this.open"><summary style="cursor:pointer;font-weight:700">Vermogen per maand, per rekening</summary>
+  <p class="small muted">De stand aan het eind van elke maand en de datum van het saldo dat daarvoor is gebruikt: het laatste saldo tot en met de 1e van de volgende maand. <span style="color:#b26b00">Oranje datum</span> = geen saldo in die maand, het laatst bekende saldo is gebruikt (klik om een saldo in te voeren; bij deposito's is dat normaal, want het bedrag staat vast). <span style="color:var(--neg)">Onbekend</span> = nog nooit een saldo ingevoerd; telt niet mee in het totaal.</p>
+  <div class="tablewrap"><table class="amtab"><tr><th style="position:sticky;left:0;z-index:2">Maand (eind)</th>${accs.map(a=>`<th class="n" style="white-space:normal;min-width:96px">${esc(a.name)}${a.closed?'<div class="small muted" style="text-transform:none">gesloten</div>':''}</th>`).join('')}<th class="n">Totaal</th></tr>${rows}</table></div></details>`;
+}
 function vRekeningen(){
   const st=monthStatus(curYm());
   const cardOf=a=>{
@@ -1673,6 +1697,7 @@ function vRekeningen(){
   <p class="small muted" style="margin:4px 0 12px">Het actuele saldo is de meting met de meest recente peildatum.</p>
   ${cards?`<div class="accgrid">${cards}</div>`:'<div class="card muted">Nog geen (open) rekeningen. Voeg je eerste rekening toe.</div>'}
   ${CL.length?`<details class="card" style="margin-top:14px" ${window._clOpen?'open':''} ontoggle="window._clOpen=this.open"><summary style="cursor:pointer;font-weight:700">Gesloten rekeningen (${CL.length})</summary><p class="small muted">Deze rekeningen tellen mee in je geschiedenis tot de sluitdatum, maar niet meer in vooruitblikken.</p><div class="accgrid"><div class="acccol">${CL.map(cardOf).join('')}</div><div class="acccol"></div></div></details>`:''}
+  ${accMonthCard()}
   <p class="small muted" style="margin-top:12px">Per ongeluk een rekening verwijderd? <a href="#rekeningen" data-a="restoreAcc">Haal haar terug uit een oudere versie</a>.</p>`;
 }
 function catTable(kind, mo, past){
@@ -2591,7 +2616,7 @@ document.addEventListener('click',e=>{
         S.meas.push({id:uid(),acc:g.id,date:d,value:Math.round(gr*price*goldPctOf(g))/100,at:Date.now(),gold:true}); n++; }
       save(); keepScroll();
       toast(n?`Goudwaarde bijgewerkt voor ${n} rekening${n===1?'':'en'}${miss?`; ${miss} zonder gewicht overgeslagen`:''}`:'Vul eerst bij de goudrekening het gewicht in (Wijzig)'); break; }
-    case 'meas': measForm(acc); break;
+    case 'meas': measForm(acc,null,b.dataset.date); break;
     case 'flow': flowForm(acc); break;
     case 'rate': rateForm(acc); break;
     case 'intr': interestForm(acc); break;
