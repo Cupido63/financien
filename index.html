@@ -757,7 +757,7 @@ function toast(t){ const d=document.createElement('div'); d.className='toast'; d
 /* ---- concrete formulieren ---- */
 function accountForm(a){
   const isNew=!a; a=a||{type:'spaar',besch:true,renteFreq:'maand',saldoDate:todayStr()};
-  form({title:isNew?'Rekening toevoegen':'Rekening bewerken', values:a, fields:[
+  form({title:isNew?'Rekening toevoegen':'Rekening bewerken', values:{...a,inBox3:!a.noBox3}, fields:[
     {k:'name',label:'Naam',req:true,ph:'Bijv. Spaarrekening ING'},
     {k:'type',label:'Soort',type:'select',options:Object.entries(TYPES).map(([k,t])=>[k,t.label])},
     ...(isNew?[
@@ -772,6 +772,7 @@ function accountForm(a){
     {k:'goldPct',label:'Percentage van de goudprijs (%)',type:'num',ph:'Bijv. 95',show:o=>o.type==='goud',help:'Bijv. 95 als je bij verkoop 95% van de goudprijs krijgt. Leeg = 100%.'},
     {k:'expRend',label:'Verwacht rendement per jaar (%)',type:'num',ph:'Bijv. 5',show:o=>TYPES[o.type].waarde,help:'Voor goud, aandelen of crypto: het rendement dat je de komende jaren verwacht. Wordt gebruikt bij Komende maanden en Rendement. Leeg = 0%.'},
     {k:'besch',label:'Direct beschikbaar (telt mee als vrij besteedbaar geld)',type:'cb'},
+    {k:'inBox3',label:'Telt mee voor box 3 (vermogensbelasting)',type:'cb',help:'Vinkje uit voor bijvoorbeeld een lijfrente- of pensioenrekening.'},
     {k:'start',label:'Geopend op (optioneel)',type:'date',help:'Maanden vóór deze datum tellen niet als "onbekend".'},
     {k:'endDate',label:'Komt vrij op (einddatum)',type:'date',show:o=>!o.besch,help:'Voor een deposito of ander vastgezet geld: de datum waarop het geld vrij opneembaar wordt. Wordt gebruikt in het overzicht "Vrij geld".'},
     {k:'reinvest',label:'Na afloop herbeleggen tegen (%)',type:'num',ph:'leeg = algemene instelling',show:o=>o.type==='deposito',help:'Alleen voor het verwachte rendement na de einddatum. Leeg = de instelling bij Instellingen (standaard dezelfde rente). 0 = niet herbeleggen.'},
@@ -781,6 +782,7 @@ function accountForm(a){
     if(o.inleg>0 && (o.inleg>20000 || (curV>0 && o.inleg>=curV)) && window._inlegOk!==o.inleg){ window._inlegOk=o.inleg;
       return `Klopt de verwachte inleg van ${E(o.inleg)} per maand? Dat is ${curV>0&&o.inleg>=curV?'meer dan het hele saldo':'erg veel'}. Dit veld is voor het bedrag dat je elke maand bijstort, niet voor het saldo. Klik nogmaals op Opslaan als het toch klopt.`; }
     window._inlegOk=null;
+    o.noBox3=!o.inBox3; delete o.inBox3;
     if(isNew){
       const sal=o.saldo, sd=o.saldoDate||todayStr(); delete o.saldo; delete o.saldoDate;
       const acc=Object.assign({id:uid()},o); S.accounts.push(acc);
@@ -1926,6 +1928,48 @@ function forecastCard(){
   ${past.map(y=>{ const f=F[y], w=totalRend(y); const d=w&&w.eur!=null?w.eur-f.eur:null;
     return `<tr><td>${y}</td><td class="n">${E(f.eur)}${f.pct!=null?` <span class="small muted">${P(f.pct)}</span>`:''}</td><td class="n">${w?(w.eur!=null?E(w.eur)+' ':'')+(w.pct!=null?`<span class="small muted">${P(w.pct)}</span>`:''):'<span class="muted">–</span>'}</td><td class="n ${d==null?'':d<0?'neg':'pos'}">${d==null?'–':(d<0?'−':'+')+E(Math.abs(d))}</td></tr>`; }).join('')}</table></div></div>`;
 }
+/* Box 3 (forfaitair stelsel tot 2028, met tegenbewijsregeling). sp = bank- en spaartegoeden, ov = overige bezittingen, hv = heffingsvrij vermogen per persoon, t = tarief */
+const BOX3={2024:{sp:1.03,ov:6.04,hv:57000,t:36},2025:{sp:1.44,ov:5.88,hv:57684,t:36},2026:{sp:1.28,ov:6.00,hv:59357,t:36,voorl:true}};
+const b3Par=y=>{ if(BOX3[y]) return {...BOX3[y],est:false}; const ks=Object.keys(BOX3).map(Number).sort(); const k=y<ks[0]?ks[0]:ks[ks.length-1]; return {...BOX3[k],est:true,from:k}; };
+const b3Cat=a=>({betaal:'sp',spaar:'sp',deposito:'sp',contant:'sp'}[a.type]||'ov');
+function box3Calc(y){
+  const P=b3Par(y), cy=curY(), partner=S.settings.box3Partner??(S.settings.people.length>=2), n=partner?2:1;
+  const v={sp:0,ov:0}, items=[], missing=[]; let est=false;
+  for(const a of S.accounts){ if(a.noBox3) continue; let m=valueAt(a.id,(y-1)+'-12-31'), val;
+    if(y>cy){ const c=currentOf(a.id); val=c?c.value:0; est=true; }
+    else if(m) val=m.value; else { if(a.start && a.start>=y+'-01-01') continue; const f=measOf(a.id)[0]; if(f && f.date.slice(0,4)<=String(y)){ val=f.value; missing.push(a.name); } else continue; }
+    if(!val) continue; const c=b3Cat(a); v[c]+=val; items.push({a,c,val}); }
+  const rg=v.sp+v.ov, rend=v.sp*P.sp/100+v.ov*P.ov/100, eff=rg?rend/rg:0, hv=P.hv*n, gr=Math.max(0,rg-hv), vrd=gr*eff, tax=vrd*P.t/100;
+  // werkelijk rendement (tegenbewijs): over het hele box 3-vermogen, zonder heffingsvrij vermogen
+  let real=null, realPartial=false;
+  if(y<=cy){ let e=0, any=false; for(const a of S.accounts){ if(a.noBox3) continue; const r=yearRend(a,y); if(r&&r.eur!=null){ e+=r.eur; any=true; if(r.partial||r.expected) realPartial=true; } } if(any) real=e; if(y===cy) realPartial=true; }
+  const realTax=real==null?null:Math.max(0,real)*P.t/100;
+  const pay=realTax!=null&&!realPartial&&realTax<tax?realTax:tax;
+  return {y,P,n,v,rg,rend,eff,hv,gr,vrd,tax,real,realTax,realPartial,pay,items,missing,est};
+}
+function box3Card(){
+  const cy=curY(), yrs=[cy-1,cy,cy+1], R=yrs.map(box3Calc);
+  const row=(label,f,cls='',title='')=>`<tr class="${cls}" ${title?`title="${esc(title)}"`:''}><td>${label}</td>${R.map(r=>`<td class="n">${f(r)}</td>`).join('')}</tr>`;
+  const pc=x=>numIn(Math.round(x*100)/100)+'%';
+  return `<div class="card"><h2>Vermogensbelasting (box 3)</h2><p class="small muted">Een schatting op basis van je saldi op 1 januari (de peildatum). Spaargeld = betaal-, spaar- en depositorekeningen en contant geld; overige bezittingen = aandelen, goud, crypto en overig. Je eigen huis en je hypotheek vallen in box 1 en tellen hier niet mee. ${(S.settings.box3Partner??(S.settings.people.length>=2))?'Gerekend als fiscale partners.':'Gerekend zonder fiscale partner.'} De echte bedragen staan in je aangifte.</p>
+  <div style="margin:0 0 12px"><div class="small" style="font-weight:600;margin-bottom:4px">Welke rekeningen tellen mee? <span class="muted" style="font-weight:400">Vinkje aan = telt mee, vinkje uit = telt niet mee.</span></div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px 18px">${S.accounts.map(a=>`<label class="small" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" class="b3acc" data-id="${a.id}" ${a.noBox3?'':'checked'}> ${esc(a.name)} <span class="muted">(${b3Cat(a)==='sp'?'spaargeld':'overige bezitting'})</span></label>`).join('')}</div></div>
+  <div class="tablewrap"><table>
+  <tr><th></th>${R.map(r=>`<th class="n">${r.y}${r.y===cy+1?' (schatting)':''}<div class="small muted" style="font-weight:400;text-transform:none">aangifte in ${r.y+1}</div></th>`).join('')}</tr>
+  ${row('Spaargeld op 1 januari',r=>E(r.v.sp))}
+  ${row('Overige bezittingen op 1 januari',r=>E(r.v.ov))}
+  ${row('<b>Vermogen in box 3</b>',r=>'<b>'+E(r.rg)+'</b>','tot')}
+  ${row('Heffingsvrij vermogen',r=>'−'+E(r.hv),'muted')}
+  ${row('Grondslag (deel waarover je belasting betaalt)',r=>E(r.gr))}
+  ${row('Fictief rendement',r=>`<span class="small muted">${pc(r.P.sp)} / ${pc(r.P.ov)}${r.P.voorl?' (voorlopig)':''}${r.P.est?' (cijfers '+r.P.from+')':''}</span>`,'muted','Percentage voor spaargeld / overige bezittingen')}
+  ${row('Belasting volgens fictief rendement',r=>E(r.tax),'',`Grondslag × gemiddeld fictief rendement × tarief`)}
+  ${row('Werkelijk rendement (alles, zonder vrijstelling)',r=>r.real==null?'<span class="muted">–</span>':(r.real<0?'−':'')+E(Math.abs(r.real))+(r.realPartial?' <span class="badge w">tot nu</span>':''),'muted','Rente, dividend en waardeverandering over je hele box 3-vermogen, zonder heffingsvrij vermogen (tegenbewijsregeling)')}
+  ${row('Belasting volgens werkelijk rendement',r=>r.realTax==null?'<span class="muted">–</span>':E(r.realTax),'muted')}
+  ${row('<b>Te betalen (laagste van de twee)</b>',r=>'<b>'+E(r.pay)+'</b>','tot keyrow')}
+  </table></div>
+  ${R.filter(r=>r.missing.length).map(r=>`<p class="small muted">${r.y}: geen saldo op 31 december ${r.y-1} bekend voor ${r.missing.map(esc).join(', ')}. Daarvoor is de eerste bekende waarde gebruikt, dus de schatting is minder precies.</p>`).join('')}
+  <p class="small muted">Het werkelijke rendement van dit jaar is pas na 31 december bekend; tot die tijd rekent de app met het fictieve rendement. Vanaf ${Math.max(2028,cy+1)} komt er waarschijnlijk een nieuw box 3-stelsel op basis van werkelijk rendement; dan kloppen deze cijfers niet meer.</p></div>`;
+}
 function vRendement(){
   const years=[...new Set(S.meas.map(m=>+m.date.slice(0,4)).concat(S.histRend.map(h=>+h.year)))].sort(); if(!years.includes(curY())) years.push(curY());
   const ys=years.slice(-6);
@@ -1935,6 +1979,7 @@ function vRendement(){
   ${expRendCard()}
   ${wealthMixCard()}
   ${forecastCard()}
+  ${box3Card()}
   <div class="card"><h2>Rendement tot nu, per jaar</h2><div class="tablewrap"><table><tr><th>Rekening</th>${ys.map(y=>`<th class="n">${y}</th>`).join('')}</tr>
     ${S.accounts.map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
     <tr class="tot"><td>Totaal vermogen</td>${ys.map(y=>`<td class="n">${cell(totalRend(y))}</td>`).join('')}</tr></table></div></div>
@@ -2063,7 +2108,8 @@ function vInstellingen(){
       <div class="f"><label>Standaard inflatie per jaar (%)</label><input id="s_infl" inputmode="decimal" value="${numIn(s.infl)}"></div>
       <div class="f"><label>Standaard vermogensrendement per jaar (%)</label><input id="s_rend" inputmode="decimal" value="${numIn(s.rend)}"></div>
       <div class="f"><label>Standaard inkomensgroei per jaar (%)</label><input id="s_growth" inputmode="decimal" value="${numIn(s.growth)}"></div>
-      <div class="f"><label>Vermogensbelasting (box 3), % van het vermogen per jaar</label><input id="s_box3" inputmode="decimal" value="${numIn(s.box3)}"><div class="help">Standaard 0. Wordt in de prognose van het rendement afgetrokken.</div></div>
+      <div class="f"><label>Vermogensbelasting (box 3), % van het vermogen per jaar</label><input id="s_box3" inputmode="decimal" value="${numIn(s.box3)}"><div class="help">Standaard 0. Wordt in de prognose van het rendement afgetrokken. Bij Rendement zie je wat je werkelijk ongeveer betaalt.</div></div>
+      <div class="f cb"><label><input type="checkbox" id="s_b3partner" ${(s.box3Partner??(s.people.length>=2))?'checked':''}> Fiscale partners (dubbel heffingsvrij vermogen in box 3)</label></div>
       <div class="f"><label>Herbeleggen na afloop van een deposito: rente (%)</label><input id="s_reinv" inputmode="decimal" value="${s.reinvestRate==null?'':numIn(s.reinvestRate)}" placeholder="leeg = dezelfde rente als de deposito"><div class="help">Voor het verwachte rendement: na de einddatum rekent de app alsof je het geld opnieuw vastzet tegen dit percentage. Leeg = dezelfde rente als de deposito. 0 = niet herbeleggen. Per deposito kun je dit bij Bewerken aanpassen.</div></div>
       <div class="f"><label>Scenario voorzichtig: rendement beleggingen, goud en crypto (%)</label><input id="s_scenLow" inputmode="decimal" value="${numIn(s.scenLow??0)}"></div>
       <div class="f"><label>Scenario gunstig: extra bovenop het verwachte rendement (%-punt)</label><input id="s_scenHigh" inputmode="decimal" value="${numIn(s.scenHigh??3)}"></div>
@@ -2149,6 +2195,7 @@ const HELP={
   <p><b>Scenario's:</b> wat er gebeurt als goud, aandelen en crypto tegenvallen (voorzichtig, standaard 0%) of meevallen (gunstig, standaard 3 procentpunt boven je verwachting). Rente op sparen en deposito's blijft gelijk.</p>
   <p><b>Verdeling van je vermogen:</b> huidige waarde per soort, met het verwachte rendement over de komende 12 maanden.</p>
   <p><b>Verwacht tegenover werkelijk:</b> de app onthoudt de verwachting voor elk komend jaar (de laatste stand vóór 1 januari). Na afloop van het jaar zie je die naast het werkelijke rendement.</p>
+  <p><b>Vermogensbelasting (box 3):</b> de app telt je saldi op 1 januari op (spaargeld en overige bezittingen), trekt het heffingsvrij vermogen af en rekent met de fictieve percentages van de Belastingdienst; daarover betaal je 36%. Daarnaast rekent hij met je werkelijke rendement over je hele box 3-vermogen (zonder vrijstelling). Je betaalt het laagste bedrag. <i>Voorbeeld 2026:</i> € 150.000 spaargeld, fiscale partners: (€ 150.000 − € 118.714) × 1,28% × 36% ≈ € 144. Met de vinkjes in de kaart bepaal je per rekening of hij meetelt (vinkje aan = telt mee).</p>
   <p><b>Rendement tot nu:</b> bij rekeningen met rente telt eerst de rente die je echt hebt ontvangen; anders een schatting op basis van saldi en rente. Bij goud en beleggingen: waardestijging min bijgestorte bedragen.</p>`],
  prognose:['30 jaar',`<p>Een berekening van je vermogen over 30 jaar. Geen garantie en geen beleggingsadvies.</p>
   <p><b>Per jaar:</b> vermogen begin + rendement + inkomsten − uitgaven = vermogen eind.</p>
@@ -2259,6 +2306,7 @@ document.addEventListener('click',e=>{
       if(Object.values(vals).some(v=>isNaN(v))) { toast('Controleer de getallen'); return; }
       const rv=$('#s_reinv').value.trim(); S.settings.reinvestRate=rv===''?null:parseNum(rv); if(rv!==''&&isNaN(S.settings.reinvestRate)){ toast('Controleer het herbeleggingspercentage'); return; }
       const sl=parseNum($('#s_scenLow').value), sh=parseNum($('#s_scenHigh').value); if(!isNaN(sl)) S.settings.scenLow=sl; if(!isNaN(sh)) S.settings.scenHigh=sh;
+      S.settings.box3Partner=$('#s_b3partner').checked;
       Object.assign(S.settings,vals); S.settings.people=$('#s_people').value.split(',').map(x=>x.trim()).filter(Boolean); save(); render(); toast('Instellingen opgeslagen'); break; }
     case 'catAdd': { const k=b.dataset.kind, el=$('#newCat_'+k), nm=el.value.trim(), list=k==='uit'?S.expCats:S.incCats;
       if(!nm) { el.focus(); return; } if(nm===AFS||list.includes(nm)){ toast('Die categorie bestaat al'); return; }
@@ -2295,6 +2343,7 @@ document.addEventListener('change',e=>{
   if(t.classList.contains('subname')){ const err=renameSub(t.dataset.cat,t.dataset.sub,t.value); if(err){ toast(err); t.value=t.dataset.sub; return; } save(); keepScroll(); toast('Naam gewijzigd'); return; }
   if(t.classList.contains('pfield')){ const v=nlToIso(t.value); if(v===null){ toast('Vul de datum in als dd-mm-jjjj, bijvoorbeeld 10-09-1963'); t.focus(); return; }
     const P=(S.settings.persons ||= {}); const o=(P[t.dataset.p] ||= {}); if(v) o[t.dataset.k]=v; else delete o[t.dataset.k]; save(); keepScroll(); toast(v?'Opgeslagen: '+dNl(v):'Datum gewist'); return; }
+  if(t.classList.contains('b3acc')){ const a=accById(t.dataset.id); if(a){ if(t.checked) delete a.noBox3; else a.noBox3=true; save(); keepScroll(); toast(a.name+(t.checked?': telt mee voor box 3':': telt niet mee voor box 3')); } return; }
   if(t.id==='aowLater'){ S.settings.aowLater=+t.value; save(); keepScroll(); toast('Opgeslagen'); return; }
   if(t.classList.contains('workcat')){ S.settings.workCats=[...document.querySelectorAll('.workcat:checked')].map(x=>x.value); save(); toast('Opgeslagen'); return; }
   if(t.classList.contains('noinv1')){ const c=t.dataset.cat; S.settings.noInvCats=S.settings.noInvCats.filter(x=>x!==c); if(t.checked) S.settings.noInvCats.push(c); save(); toast(t.checked?c+': nooit een investering':c+': uitgaven boven het grensbedrag worden weer investeringen'); return; }
