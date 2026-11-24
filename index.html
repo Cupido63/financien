@@ -288,7 +288,7 @@ async function deriveKey(pw,salt){ const base=await crypto.subtle.importKey('raw
   return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:250000,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']); }
 async function encryptState(json){ const iv=crypto.getRandomValues(new Uint8Array(12));
   const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},CRYPTO.key,new TextEncoder().encode(json));
-  return JSON.stringify({app:'huishoudfinancien',v:1,kdf:'PBKDF2-SHA256-250000',salt:b64e(CRYPTO.salt),iv:b64e(iv),data:b64e(ct)}); }
+  return JSON.stringify({app:'huishoudfinancien',v:1,kdf:'PBKDF2-SHA256-250000',salt:b64e(CRYPTO.salt),iv:b64e(iv),data:b64e(ct),at:Date.now()}); }
 async function decryptBlob(txt,pw){ const o=JSON.parse(txt); if(!o||o.app!=='huishoudfinancien') throw new Error('format');
   const salt=b64d(o.salt), key=await deriveKey(pw,salt);
   let pt; try{ pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(o.iv)},key,b64d(o.data)); }catch(e){ throw new Error('wachtwoord'); }
@@ -311,11 +311,13 @@ async function ghPut(text,sha){
 /* Bijlagen (offertes, facturen): elk bestand versleuteld als eigen bestand in de map bijlagen/ van de privé-repository */
 const attUrl=id=>`https://api.github.com/repos/${encodeURIComponent(CFG.owner)}/${encodeURIComponent(CFG.repo)}/contents/bijlagen/${encodeURIComponent(id)}.json`;
 async function attPut(id,bytes){
+  if(LOCAL_MODE) throw new Error('Bijlagen toevoegen kan alleen met internet. Open de app online.');
   const iv=crypto.getRandomValues(new Uint8Array(12)), ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},CRYPTO.key,bytes);
   const text=JSON.stringify({app:'huishoudfinancien-bijlage',v:1,salt:b64e(CRYPTO.salt),iv:b64e(iv),data:b64e(ct)});
   const r=await fetch(attUrl(id),{method:'PUT',headers:Object.assign({'Content-Type':'application/json'},ghHeaders()),body:JSON.stringify({message:'Bijlage toegevoegd',content:b64e(new TextEncoder().encode(text))})});
-  if(r.status===401) throw new Error('token'); if(r.status===403||r.status===404) throw new Error('rechten'); if(!r.ok) throw new Error('net:'+r.status); }
+  if(r.status===401) throw new Error('token'); if(r.status===403||r.status===404) throw new Error('rechten'); if(!r.ok) throw new Error('net:'+r.status); ldirWrite('bijlagen/'+id+'.json',text); }
 async function attGet(id){
+  if(LOCAL_MODE){ const t=await ldirRead('bijlagen/'+id+'.json'); if(!t) throw new Error('Deze bijlage staat niet in je lokale map'); const o=JSON.parse(t); return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(o.iv)},CRYPTO.key,b64d(o.data))); }
   const r=await fetch(attUrl(id)+'?t='+Date.now(),{headers:ghHeaders(),cache:'no-store'}); if(r.status===404) throw new Error('Bijlage niet gevonden'); if(!r.ok) throw new Error('net:'+r.status);
   const j=await r.json(); let content=j.content;
   if(!content||j.encoding==='none'){ const b=await fetch(`https://api.github.com/repos/${encodeURIComponent(CFG.owner)}/${encodeURIComponent(CFG.repo)}/git/blobs/${j.sha}`,{headers:ghHeaders()}); if(!b.ok) throw new Error('net:'+b.status); content=(await b.json()).content; }
@@ -339,6 +341,79 @@ async function histGet(sha){
   const o=JSON.parse(new TextDecoder().decode(b64d(content.replace(/\n/g,''))));
   const key=o.salt===b64e(CRYPTO.salt)?CRYPTO.key:await deriveKey(CRYPTO.pw,b64d(o.salt));
   const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(o.iv)},key,b64d(o.data)); return JSON.parse(new TextDecoder().decode(pt)); }
+/* ============ Offline werken en een lokale map op de laptop ============
+   - Offline wijzigingen worden versleuteld bewaard (hf-pending) en later naar GitHub gestuurd.
+   - Lokale map (Chrome/Edge op de laptop): app, versleutelde gegevens en bijlagen worden ook als bestanden opgeslagen. */
+const PEND_KEY='hf-pending';
+let LDIR=null, ldirPerm='geen', ldirLast='', LOCAL_MODE=false;
+const fsOk=()=>typeof window.showDirectoryPicker==='function';
+function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('hf-local',1); r.onupgradeneeded=()=>r.result.createObjectStore('h'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function idbGet(k){ try{ const db=await idb(); return await new Promise(res=>{ const t=db.transaction('h').objectStore('h').get(k); t.onsuccess=()=>res(t.result); t.onerror=()=>res(null); }); }catch(e){ return null; } }
+async function idbSet(k,v){ try{ const db=await idb(); await new Promise(res=>{ const t=db.transaction('h','readwrite'); t.objectStore('h').put(v,k); t.oncomplete=res; t.onerror=res; }); }catch(e){} }
+async function ldirInit(){ if(!fsOk()) return; LDIR=await idbGet('dir'); if(!LDIR){ ldirPerm='geen'; return; }
+  try{ ldirPerm=await LDIR.queryPermission({mode:'readwrite'}); }catch(e){ ldirPerm='prompt'; } }
+async function ldirWrite(path,data){ if(!LDIR||ldirPerm!=='granted') return false;
+  try{ const parts=path.split('/'); let d=LDIR; for(const p of parts.slice(0,-1)) d=await d.getDirectoryHandle(p,{create:true});
+    const f=await d.getFileHandle(parts[parts.length-1],{create:true}); const w=await f.createWritable(); await w.write(data); await w.close(); return true; }catch(e){ return false; } }
+async function ldirRead(path){ if(!LDIR) return null; try{ const parts=path.split('/'); let d=LDIR; for(const p of parts.slice(0,-1)) d=await d.getDirectoryHandle(p);
+    const f=await d.getFileHandle(parts[parts.length-1]); return await (await f.getFile()).text(); }catch(e){ return null; } }
+async function lfsAfterSave(blob){ if(await ldirWrite('data.json',blob)){ ldirLast=new Date().toLocaleString('nl-NL'); const el=$('#ldirStat'); if(el) el.textContent='Laatst opgeslagen in de map: '+ldirLast; } }
+async function lfsWriteApp(){ if(location.protocol==='file:') return; let n=0;
+  for(const [f,bin] of [['index.html',false],['manifest.json',false],['icon.png',true]]){ try{ const r=await fetch(f,{cache:'no-store'}); if(r.ok && await ldirWrite(f,bin?await r.blob():await r.text())) n++; }catch(e){} }
+  try{ const r=await fetch('sw.js',{cache:'no-store'}); if(r.ok) await ldirWrite('sw.js',await r.text()); }catch(e){} return n; }
+function allAtts(){ const out=[]; for(const k of ['actuals','expected','recurring','accounts']) for(const x of (S[k]||[])) for(const m of (x.att||[])) out.push(m); return out; }
+async function attGetRaw(id){ if(LOCAL_MODE) return await ldirRead('bijlagen/'+id+'.json');
+  const r=await fetch(attUrl(id)+'?t='+Date.now(),{headers:ghHeaders(),cache:'no-store'}); if(!r.ok) throw new Error('net:'+r.status);
+  const j=await r.json(); let content=j.content;
+  if(!content||j.encoding==='none'){ const b=await fetch(`https://api.github.com/repos/${encodeURIComponent(CFG.owner)}/${encodeURIComponent(CFG.repo)}/git/blobs/${j.sha}`,{headers:ghHeaders()}); if(!b.ok) throw new Error('net:'+b.status); content=(await b.json()).content; }
+  return new TextDecoder().decode(b64d(content.replace(/\n/g,''))); }
+async function lfsSyncAll(){
+  if(!LDIR||ldirPerm!=='granted'){ toast('Kies eerst een map en geef toegang'); return; }
+  const st=$('#ldirStat'); const say=t=>{ if(st) st.textContent=t; };
+  say('Bezig: app…'); const nApp=await lfsWriteApp();
+  say('Bezig: gegevens…'); if(CRYPTO&&CRYPTO.key) await lfsAfterSave(await encryptState(JSON.stringify(S)));
+  const atts=allAtts(); let n=0, skip=0;
+  for(const [i,m] of atts.entries()){ say(`Bezig: bijlage ${i+1} van ${atts.length}…`); if(await ldirRead('bijlagen/'+m.id+'.json')){ skip++; continue; }
+    try{ const t=await attGetRaw(m.id); if(t && await ldirWrite('bijlagen/'+m.id+'.json',t)) n++; }catch(e){} }
+  say(`Klaar: app (${nApp} bestanden), gegevens en ${n+skip} van ${atts.length} bijlagen staan in de map. ${new Date().toLocaleString('nl-NL')}`);
+  toast('Alles staat in je lokale map'); }
+async function ldirChoose(){
+  try{ const h=await window.showDirectoryPicker({id:'hf-map',mode:'readwrite'}); LDIR=h; await idbSet('dir',h); ldirPerm=await h.requestPermission({mode:'readwrite'}); }
+  catch(e){ if(e&&e.name==='AbortError') return; toast('Map kiezen lukt niet'); return; }
+  render(); if(ldirPerm==='granted') lfsSyncAll(); }
+async function ldirGrant(){ if(!LDIR) return ldirChoose(); try{ ldirPerm=await LDIR.requestPermission({mode:'readwrite'}); }catch(e){} render(); if(ldirPerm==='granted'){ toast('Toegang tot de map gegeven'); lfsCheckNewer(); } }
+function ldirForget(){ confirmBox('De koppeling met de lokale map wordt verwijderd. De bestanden in de map blijven staan.',async()=>{ LDIR=null; ldirPerm='geen'; await idbSet('dir',null); },'Ontkoppelen'); }
+function localFolderHtml(){
+  if(!fsOk()) return `<div class="info" style="margin-top:12px"><b>Lokale map:</b> alles ook als bestanden op je laptop bewaren kan in Chrome of Edge op een laptop of computer. Op deze browser of dit apparaat werkt het niet.</div>`;
+  const name=LDIR?LDIR.name:'';
+  return `<div class="info" style="margin-top:12px"><b>Lokale map op deze laptop</b><div class="small" style="margin:4px 0 8px">De app slaat hier ook een kopie op: de app zelf (index.html), je gegevens (data.json) en je bijlagen (map bijlagen), versleuteld met je wachtwoord. Zonder internet open je de app door index.html in die map te openen en voor "Offline openen vanuit lokale map" te kiezen.</div>
+  ${!LDIR?`<button class="btn sm" data-a="ldirChoose">Map kiezen</button>`:`<div class="row" style="gap:8px;flex-wrap:wrap"><span>Map: <b>${esc(name)}</b> ${ldirPerm==='granted'?'<span class="badge g">toegang</span>':'<span class="badge w">geen toegang</span>'}</span>
+    ${ldirPerm==='granted'?`<button class="btn sm" data-a="ldirSync">Nu alles naar de map schrijven</button>`:`<button class="btn sm" data-a="ldirGrant">Toegang tot de map geven</button>`}
+    <button class="btn ghost sm" data-a="ldirChoose">Andere map</button><button class="btn ghost sm" data-a="ldirForget">Ontkoppelen</button></div>
+    <div class="small muted" id="ldirStat" style="margin-top:6px">${ldirLast?'Laatst opgeslagen in de map: '+ldirLast:ldirPerm==='granted'?'Wordt bij elke wijziging bijgewerkt.':'Na het herstarten van de browser vraagt Chrome één keer opnieuw om toestemming.'}</div>`}
+  </div>`;
+}
+/* Nieuwere versie in de lokale map (offline gewerkt)? Dan aanbieden om over te nemen */
+async function lfsCheckNewer(){
+  if(LOCAL_MODE||!LDIR||ldirPerm!=='granted'||!CRYPTO) return;
+  const t=await ldirRead('data.json'); if(!t) return; let o; try{ o=JSON.parse(t); }catch(e){ return; }
+  if(!o.at||!o.offline) return; const cur=JSON.parse(localStorage.getItem(CACHE_KEY)||'null'); const curAt=cur?(JSON.parse(cur.blob).at||0):0; if(o.at<=curAt) return;
+  let d; try{ d=await decryptBlob(t,CRYPTO.pw); }catch(e){ return; } if(d.json===JSON.stringify(S)) return;
+  $('#modalRoot').innerHTML=`<div class="ov"><div class="modal"><h3>Offline wijzigingen in je lokale map</h3><p>In je lokale map staat een versie van ${esc(new Date(o.at).toLocaleString('nl-NL'))} die je offline hebt bewerkt. Die is nieuwer dan de versie in GitHub.</p>
+    <div class="actions"><button class="btn sec" id="lnNo">Negeren</button><button class="btn" id="lnYes">Overnemen</button></div></div></div>`;
+  $('#lnNo').onclick=closeModal; $('#lnYes').onclick=()=>{ closeModal(); applyJson(d.json); lastJson=null; save(); render(); toast('Offline wijzigingen overgenomen'); };
+}
+/* Openen zonder internet vanuit de lokale map (bijv. index.html dubbelklikken) */
+async function openLocalFolder(pw){
+  const err=t=>{ const el=$('#suErr'); if(el) el.textContent=t; };
+  if(!fsOk()){ err('Dit kan alleen in Chrome of Edge op een laptop of computer.'); return; }
+  if(!pw){ err('Vul eerst je wachtwoord in.'); return; }
+  let h; try{ h=await window.showDirectoryPicker({id:'hf-map',mode:'readwrite'}); await h.requestPermission({mode:'readwrite'}); }catch(e){ return; }
+  LDIR=h; ldirPerm='granted'; await idbSet('dir',h);
+  const t=await ldirRead('data.json'); if(!t){ err('In deze map staat geen data.json van de app.'); return; }
+  try{ const d=await decryptBlob(t,pw); CRYPTO={pw,salt:d.salt,key:d.key}; LOCAL_MODE=true; CFG=CFG||{}; applyJson(d.json); closeModal(); setSync('lokaal'); render(); toast('Geopend vanuit je lokale map (offline)'); }
+  catch(e){ err(errTxt(e)); }
+}
 const errTxt=e=>{ const m=String(e&&e.message||e); return m==='token'?'Het token klopt niet of is verlopen.':m==='repo'?'Die repository bestaat niet, of het token heeft er geen toegang toe.':m==='rechten'?'Het token mag niet schrijven in deze repository. Geef het token de rechten "Contents: Read and write".':m==='wachtwoord'?'Het wachtwoord klopt niet.':m==='format'?'data.json in deze repository is geen bestand van deze app.':m.startsWith('net')||m==='Failed to fetch'?'Geen verbinding met GitHub. Controleer je internet.':m; };
 function cacheLocal(blob){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify({blob,sha:remoteSha})); }catch(e){} }
 function setSync(st,msg){ dbState=st; if(msg!=null) syncMsg=msg; const el=document.getElementById('syncDot'); if(el){ el.className='sync '+st; el.textContent=syncTxt(); } }
@@ -354,11 +429,19 @@ function save(){
 async function flush(){
   if(saving){ clearTimeout(saveTimer); saveTimer=setTimeout(flush,800); return; }
   const json=JSON.stringify(S); if(json===lastJson){ dirty=false; setSync('ok'); return; }
-  saving=true; setSync('bezig');
-  try{ const blob=await encryptState(json); remoteSha=await ghPut(blob,remoteSha); lastJson=json; dirty=JSON.stringify(S)!==lastJson; cacheLocal(blob); setSync(dirty?'wacht':'ok'); if(dirty){ saveTimer=setTimeout(flush,800); } }
+  saving=true; setSync('bezig'); let blob=null; const offBlob=b=>{ try{ return JSON.stringify(Object.assign(JSON.parse(b),{offline:true})); }catch(e){ return b; } };
+  try{ blob=await encryptState(json);
+    if(LOCAL_MODE){ await lfsAfterSave(offBlob(blob)); lastJson=json; dirty=JSON.stringify(S)!==lastJson; setSync('lokaal'); saving=false; return; }
+    remoteSha=await ghPut(blob,remoteSha); lastJson=json; dirty=JSON.stringify(S)!==lastJson; cacheLocal(blob); try{ localStorage.removeItem(PEND_KEY); }catch(e){} lfsAfterSave(blob); setSync(dirty?'wacht':'ok'); if(dirty){ saveTimer=setTimeout(flush,800); } }
   catch(e){ if(String(e.message)==='conflict'){ saving=false; return conflict(); }
-    if(String(e.message).startsWith('net')||e.message==='Failed to fetch'){ setSync('lokaal'); saveTimer=setTimeout(flush,15000); } else setSync('fout',errTxt(e)); }
+    if(String(e.message).startsWith('net')||e.message==='Failed to fetch'){ setSync('lokaal'); if(blob){ try{ localStorage.setItem(PEND_KEY,JSON.stringify({blob,base:remoteSha,at:Date.now()})); }catch(_){} lfsAfterSave(offBlob(blob)); } saveTimer=setTimeout(flush,15000); } else setSync('fout',errTxt(e)); }
   saving=false;
+}
+function pendingChoice(json,at){
+  $('#modalRoot').innerHTML=`<div class="ov"><div class="modal"><h3>Offline wijzigingen op dit apparaat</h3><p class="small">Je hebt op dit apparaat offline gewerkt (${esc(new Date(at).toLocaleString('nl-NL'))}), maar intussen zijn er op een ander apparaat ook wijzigingen opgeslagen. Kies welke versie je wilt houden.</p>
+  <div class="actions" style="flex-wrap:wrap"><button class="btn sec" id="pcRemote">Versie van het andere apparaat</button><button class="btn" id="pcLocal">Mijn offline wijzigingen</button></div></div></div>`;
+  $('#pcRemote').onclick=()=>{ try{ localStorage.removeItem(PEND_KEY); }catch(e){} closeModal(); toast('Versie van het andere apparaat gehouden'); };
+  $('#pcLocal').onclick=()=>{ closeModal(); applyJson(json); lastJson=null; save(); render(); toast('Je offline wijzigingen worden opgeslagen'); };
 }
 async function conflict(){
   let rem; try{ rem=await ghGet(); }catch(e){ setSync('fout',errTxt(e)); return; }
@@ -368,6 +451,7 @@ async function conflict(){
 }
 function applyJson(json){ S=Object.assign(emptyState(),JSON.parse(json)); delete S.loading; normalize(); lastJson=JSON.stringify(S); if(S._migrated){ delete S._migrated; lastJson=null; save(); } }
 async function refreshRemote(){
+  if(LOCAL_MODE) return;
   if(!CRYPTO || saving || dirty || busyEditing()) return;
   try{ const rem=await ghGet(); if(!rem || rem.sha===remoteSha) return;
     const d=await decryptBlob(rem.text,CRYPTO.pw); remoteSha=rem.sha; applyJson(d.json); cacheLocal(rem.text);
@@ -375,9 +459,12 @@ async function refreshRemote(){
 }
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') refreshRemote(); else if(dirty){ clearTimeout(saveTimer); flush(); } });
 setInterval(refreshRemote,60000);
-window.addEventListener('beforeunload',e=>{ if(dirty){ flush(); e.preventDefault(); e.returnValue=''; } });
+window.addEventListener('online',()=>{ if(CRYPTO && !LOCAL_MODE && (dirty||localStorage.getItem(PEND_KEY))){ lastJson=dirty?lastJson:null; clearTimeout(saveTimer); flush(); } });
+if(location.protocol==='https:' && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+window.addEventListener('beforeunload',e=>{ if(dirty && dbState!=='lokaal' && !LOCAL_MODE){ flush(); e.preventDefault(); e.returnValue=''; } });
 
 async function initDb(){
+  await ldirInit();
   CFG=readCfg();
   if(!CFG||!CFG.owner||!CFG.repo||!CFG.token){ return setupScreen(); }
   if(!CFG.pw){ return unlockScreen(); }
@@ -395,13 +482,20 @@ async function connect(pw,isSetup,pw2){
       S=emptyState(); normalize(); const blob=await encryptState(JSON.stringify(S)); remoteSha=await ghPut(blob,null); lastJson=JSON.stringify(S); cacheLocal(blob);
     } else {
       const d=await decryptBlob(rem.text,pw); CRYPTO={pw,salt:d.salt,key:d.key}; remoteSha=rem.sha; applyJson(d.json); cacheLocal(rem.text);
+      const pnd=JSON.parse(localStorage.getItem(PEND_KEY)||'null');
+      if(pnd){ try{ const pd=await decryptBlob(pnd.blob,pw);
+        if(pd.json===d.json) localStorage.removeItem(PEND_KEY);
+        else if(pnd.base===rem.sha){ applyJson(pd.json); lastJson=null; setTimeout(()=>{ save(); toast('Je offline wijzigingen worden nu opgeslagen'); },300); }
+        else setTimeout(()=>pendingChoice(pd.json,pnd.at),400); }catch(_){} }
     }
     if(CFG.remember) { CFG.pw=pw; } else delete CFG.pw; writeCfg(CFG);
-    $('#modalRoot').innerHTML=''; setSync('ok'); render(); return true;
+    $('#modalRoot').innerHTML=''; setSync('ok'); render();
+    if(LDIR && ldirPerm==='granted'){ lfsWriteApp(); setTimeout(lfsCheckNewer,800); }
+    return true;
   }catch(e){
     // offline: probeer de lokale (versleutelde) kopie
     if((String(e.message).startsWith('net')||e.message==='Failed to fetch') && !isSetup){
-      try{ const c=JSON.parse(localStorage.getItem(CACHE_KEY)||'null'); if(c){ const d=await decryptBlob(c.blob,pw); CRYPTO={pw,salt:d.salt,key:d.key}; remoteSha=c.sha; applyJson(d.json); $('#modalRoot').innerHTML=''; setSync('lokaal'); render(); toast('Offline: je ziet de laatst opgeslagen gegevens'); return true; } }catch(_){}
+      try{ const pnd=JSON.parse(localStorage.getItem(PEND_KEY)||'null'); const c=pnd?{blob:pnd.blob,sha:pnd.base}:JSON.parse(localStorage.getItem(CACHE_KEY)||'null'); if(c){ const d=await decryptBlob(c.blob,pw); CRYPTO={pw,salt:d.salt,key:d.key}; remoteSha=c.sha; applyJson(d.json); $('#modalRoot').innerHTML=''; setSync('lokaal'); render(); toast('Offline: je ziet de laatst opgeslagen gegevens'); return true; } }catch(_){}
     }
     const el=document.getElementById('suErr'); if(el) el.textContent=errTxt(e); else { setSync('fout',errTxt(e)); unlockScreen(errTxt(e)); }
     return false;
@@ -417,7 +511,8 @@ function setupScreen(){
     <div class="f"><label for="suPw">Wachtwoord voor het versleutelen</label><input id="suPw" type="password" autocomplete="current-password"><div class="help">Eerste keer? Kies een nieuw wachtwoord van minimaal 8 tekens. Al eerder gekozen? Vul hetzelfde wachtwoord in. <b>Vergeet het niet:</b> zonder wachtwoord zijn de gegevens niet meer te openen.</div></div>
     <div class="f"><label for="suPw2">Wachtwoord herhalen (alleen de eerste keer nodig)</label><input id="suPw2" type="password" autocomplete="new-password"></div>
     <div class="f cb"><label><input type="checkbox" id="suRem" checked> Wachtwoord onthouden op dit apparaat</label><div class="help">Uitvinken op een apparaat dat je deelt met anderen; dan vraagt de app het wachtwoord elke keer.</div></div>
-    <div class="err" id="suErr"></div><div class="actions"><button class="btn" type="submit" id="suGo">Koppelen</button></div></form></div>`;
+    <div class="err" id="suErr"></div><div class="actions">${fsOk()?'<button type="button" class="btn sec" id="suLocal" title="Zonder internet je gegevens openen uit de lokale map op deze laptop">Offline openen vanuit lokale map</button>':''}<button class="btn" type="submit" id="suGo">Koppelen</button></div></form></div>`;
+  if($('#suLocal')) $('#suLocal').onclick=()=>openLocalFolder($('#suPw').value);
   $('#suForm').onsubmit=async e=>{ e.preventDefault(); $('#suErr').textContent=''; $('#suGo').disabled=true; $('#suGo').textContent='Bezig…';
     CFG={owner:$('#suOwner').value.trim().replace(/^@/,''),repo:$('#suRepo').value.trim(),token:$('#suToken').value.trim(),remember:$('#suRem').checked};
     if(!CFG.owner||!CFG.repo||!CFG.token||!$('#suPw').value){ $('#suErr').textContent='Vul alle velden in.'; $('#suGo').disabled=false; $('#suGo').textContent='Koppelen'; return; }
@@ -429,7 +524,8 @@ function unlockScreen(msg){
   $('#modalRoot').innerHTML=`<div class="ov"><form class="modal" id="ulForm" novalidate><h3>Wachtwoord</h3><p class="small">Vul je wachtwoord in om je gegevens te openen.</p>
     <div class="f"><input id="ulPw" type="password" autocomplete="current-password" aria-label="Wachtwoord"></div>
     <div class="f cb"><label><input type="checkbox" id="ulRem"> Wachtwoord onthouden op dit apparaat</label></div>
-    <div class="err" id="suErr">${msg?esc(msg):''}</div><div class="actions"><button type="button" class="btn sec" id="ulReset">Koppeling wijzigen</button><button class="btn" type="submit">Openen</button></div></form></div>`;
+    <div class="err" id="suErr">${msg?esc(msg):''}</div><div class="actions" style="flex-wrap:wrap"><button type="button" class="btn sec" id="ulReset">Koppeling wijzigen</button>${fsOk()?'<button type="button" class="btn sec" id="ulLocal">Offline openen vanuit lokale map</button>':''}<button class="btn" type="submit">Openen</button></div></form></div>`;
+  if($('#ulLocal')) $('#ulLocal').onclick=()=>openLocalFolder($('#ulPw').value);
   setTimeout(()=>$('#ulPw').focus(),30);
   $('#ulReset').onclick=setupScreen;
   $('#ulForm').onsubmit=async e=>{ e.preventDefault(); CFG.remember=$('#ulRem').checked; await connect($('#ulPw').value,false); };
@@ -585,8 +681,9 @@ function monthOverview(ym){
   return res;
 }
 function yp(y){ const o=S.years[y]||{}; const st=S.settings; return {infl:o.infl??baseInfl(y), rend:o.rend??st.rend, growth:o.growth??st.growth}; }
+const baseN=()=>Math.max(3,Math.min(36,+(S.settings.baseMonths||12)));
 function expenseBase(){
-  const c=ymI(curYm()); const months=[]; for(let i=c-24;i<c;i++) months.push(iYm(i));
+  const c=ymI(curYm()); const months=[]; for(let i=c-baseN();i<c;i++) months.push(iYm(i));
   const withData=months.filter(ym=>S.actuals.some(a=>a.kind==='uit' && a.date.slice(0,7)===ym));
   const cats={};
   if(withData.length){
@@ -670,7 +767,7 @@ function cpiRows0(){
 const cpiOn=()=>(S.settings.cpiUse??true) && !!(S.cpi&&S.cpi.cats) && cpiRows().now!=null;
 /* Projectie voor 30 jaar: elke sleutel groeit met zijn eigen langjarige prijsstijging; vaste bedragen (hypotheek) blijven gelijk */
 function cpiBase24(){
-  const c=ymI(curYm()), months=[]; for(let i=c-24;i<c;i++) months.push(iYm(i));
+  const c=ymI(curYm()), months=[]; for(let i=c-baseN();i<c;i++) months.push(iYm(i));
   const withData=months.filter(ym=>S.actuals.some(a=>a.kind==='uit'&&a.date.slice(0,7)===ym)), b={};
   for(const a of S.actuals){ if(a.kind!=='uit'||isInv(a)||!withData.includes(a.date.slice(0,7))) continue; const k=a.sub?a.cat+'|'+a.sub:a.cat; b[k]=(b[k]||0)+ +a.amount; }
   if(withData.length){ for(const k in b) b[k]/=withData.length; }
@@ -750,7 +847,7 @@ function cpiCard(){
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0">
     <div class="stat" style="background:var(--b100);border-radius:10px;padding:10px 12px" title="Gemiddelde over de laatste 12 maanden, gewogen naar jouw uitgaven"><div class="small muted">Jouw inflatie (gem. 12 mnd)</div><div style="font-size:24px;font-weight:700">${R.now==null?'–':numIn(Math.round(R.now*10)/10)+'%'}</div></div>
     <div style="background:#f3f6fa;border-radius:10px;padding:10px 12px" title="Het landelijke inflatiecijfer is per maand: de prijzen van die maand vergeleken met dezelfde maand een jaar eerder. Hier het gemiddelde van de laatste 12 maanden, en daaronder het cijfer van de laatste maand."><div class="small muted">Landelijk (CBS, gem. 12 mnd)</div><div style="font-size:24px;font-weight:700">${totA==null?'–':numIn(Math.round(totA*10)/10)+'%'}</div>${tot!=null?`<div class="small muted">${perNl(S.cpi.period)}: ${numIn(tot)}%</div>`:''}</div>
-    <div style="background:#f3f6fa;border-radius:10px;padding:10px 12px" title="Wat de 30-jaarsplanning gebruikt: de inflatie-aanname uit Instellingen plus jouw vaste afwijking van het landelijk gemiddelde over ${S.cpi&&S.cpi.longFrom?S.cpi.longFrom+'–'+S.cpi.longTo:'de afgelopen jaren'}."><div class="small muted">Lange termijn (30 jaar)</div><div style="font-size:24px;font-weight:700">${has&&R.now!=null?numIn(Math.round(P0.longRate*10)/10)+'%':'–'}</div>${has&&R.now!=null?`<div class="small muted">${numIn(+S.settings.infl)}% aanname ${P0.spread<0?'−':'+'} ${numIn(Math.abs(Math.round(P0.spread*10)/10))}% jouw afwijking</div>`:''}</div>
+    <div style="background:#f3f6fa;border-radius:10px;padding:10px 12px" title="Wat de planning per jaar gebruikt: de inflatie-aanname uit Instellingen plus jouw vaste afwijking van het landelijk gemiddelde over ${S.cpi&&S.cpi.longFrom?S.cpi.longFrom+'–'+S.cpi.longTo:'de afgelopen jaren'}."><div class="small muted">Lange termijn (30 jaar)</div><div style="font-size:24px;font-weight:700">${has&&R.now!=null?numIn(Math.round(P0.longRate*10)/10)+'%':'–'}</div>${has&&R.now!=null?`<div class="small muted">${numIn(+S.settings.infl)}% aanname ${P0.spread<0?'−':'+'} ${numIn(Math.abs(Math.round(P0.spread*10)/10))}% jouw afwijking</div>`:''}</div>
   </div>
   ${incRows.length?`<div class="tablewrap"><table><tr><th>Categorie</th><th class="n">Jouw aandeel</th><th class="n"></th><th class="n">Prijsstijging (CBS, gem. 12 mnd)</th><th class="n"></th><th class="n">Bijdrage</th></tr>
   ${incRows.map(r=>`<tr><td>${nm(r.key)}<div class="small muted">${esc(cpiLabel(r.m))}</div></td><td class="n">${P(r.share)}<div class="small muted">${E(r.amt)}</div></td><td class="n muted">×</td><td class="n ${r.rate>=4?'neg':r.rate<0?'pos':''}">${sg(r.rate)}</td><td class="n muted">=</td><td class="n"><b class="${r.contrib<0?'pos':''}">${(r.contrib<0?'−':'')+f2(r.contrib)}</b></td></tr>`).join('')}
@@ -758,7 +855,7 @@ function cpiCard(){
   <p class="small muted">Voorbeeld: ${incRows[0]?`${esc(incRows[0].key.replace('|',' › ').replace(/^inv:/,''))} is ${P(incRows[0].share)} van je uitgaven × ${sg(incRows[0].rate)} prijsstijging = ${f2(incRows[0].contrib)} procentpunt van je inflatie.`:''}</p>`
   :`<p class="muted">${has?'Nog geen uitgaven in de laatste 12 maanden.':cpiBusy?'Even geduld…':'Zodra de CBS-cijfers binnen zijn (of je eigen percentages hebt ingevuld), zie je hier je persoonlijke inflatie.'}</p>`}
   ${exc.length&&incRows.length?`<p class="small muted"><b>Niet meegeteld:</b> ${exc.map(r=>`${nm(r.key)} (${E(r.amt)}, ${r.m==='vast'?'vast bedrag':r.m==='none'?'telt niet mee':'geen cijfer'})`).join(' · ')}</p>`:''}
-  <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap"><label class="small"><input type="checkbox" id="cpiUse" ${(S.settings.cpiUse??true)?'checked':''}> Gebruik mijn persoonlijke inflatie in de 30-jaarsplanning en bij reëel rendement</label><span class="spacer"></span><span class="small muted">${status}</span><button class="btn ghost sm" data-a="cpiFetch" ${cpiBusy?'disabled':''}>Nu ophalen</button></div>
+  <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap"><label class="small"><input type="checkbox" id="cpiUse" ${(S.settings.cpiUse??true)?'checked':''}> Gebruik mijn persoonlijke inflatie in de planning per jaar en bij reëel rendement</label><span class="spacer"></span><span class="small muted">${status}</span><button class="btn ghost sm" data-a="cpiFetch" ${cpiBusy?'disabled':''}>Nu ophalen</button></div>
   </div>`;
 }
 function cpiMapModal(){
@@ -776,7 +873,7 @@ function cpiMapModal(){
   const body=[...cats].filter(c=>c!==AFS).map(c=>line('<b>'+esc(c)+'</b>',c,false)+[...(subs[c]||[])].map(s=>line(esc(s),c+'|'+s,true)).join('')).join('')
     + (invs.size?`<h4 style="margin:14px 0 4px">Investeringen (afschrijving per maand)</h4>`+[...invs].map(c=>line(esc(c),'inv:'+c,false)).join(''):'');
   $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal" style="max-width:760px"><h3>Categorieën koppelen aan het CBS</h3>
-  <p class="small muted">Kies per categorie de CBS-categorie waarvan de prijsstijging het best past. "Automatisch" is een voorstel van de app. Een subcategorie kan afwijken, zoals de hypotheek (vast bedrag: telt niet mee in je inflatie en stijgt in de 30-jaarsplanning niet mee). ${cpiCats().length?'':'<b>Er zijn nog geen CBS-cijfers opgehaald</b>; je kunt wel een eigen percentage invullen.'}</p>
+  <p class="small muted">Kies per categorie de CBS-categorie waarvan de prijsstijging het best past. "Automatisch" is een voorstel van de app. Een subcategorie kan afwijken, zoals de hypotheek (vast bedrag: telt niet mee in je inflatie en stijgt in de planning per jaar niet mee). ${cpiCats().length?'':'<b>Er zijn nog geen CBS-cijfers opgehaald</b>; je kunt wel een eigen percentage invullen.'}</p>
   <div style="max-height:60vh;overflow:auto;padding-right:4px">${body}</div>
   <div class="actions"><button class="btn sec" id="cpiReset">Alles automatisch</button><span class="spacer"></span><button class="btn sec" id="cpiCancel">Annuleren</button><button class="btn" id="cpiSave">Opslaan</button></div></div></div>`;
   const root=$('#modalRoot');
@@ -790,6 +887,32 @@ function cpiMapModal(){
     S.cpiMap=M; _cpiMemo=null; save(); closeModal(); keepScroll(); toast('Koppeling opgeslagen'); };
 }
 
+/* ===== Eén manier van rekenen voor Planning (per maand én per jaar) =====
+   Inkomsten: verwacht inkomen × inkomensgroei vanaf volgend jaar (lijfrente blijft gelijk).
+   Uitgaven: gemiddelde van de laatste N maanden (Instellingen), × inflatie vanaf volgend jaar, + wijzigingen in vaste lasten. */
+function groFor(y){ let f=1; for(let t=curY()+1;t<=y;t++) f*=1+yp(t).growth/100; return f; }
+function infFor(y){ let f=1; for(let t=curY()+1;t<=y;t++) f*=1+yp(t).infl/100; return f; }
+let _peMemo=null;
+function planInc(ym){
+  const y=+ym.slice(0,4), g=groFor(y), L=[]; let inc=0;
+  if(kortInc==='hist'){ const h=histAvg('in').avg*g; inc+=h; L.push({txt:'Gemiddelde inkomsten'+(g!==1?' (met groei)':''),amt:h}); for(const x of lfIncome(ym)){ inc+=x.v; L.push({txt:'Lijfrente ('+x.p+')',amt:x.v}); } return {inc,incL:L}; }
+  const o=expIncome(ym);
+  for(const [c,subs] of Object.entries(o)) for(const [sb,v] of Object.entries(subs)){ const a=c==='Lijfrente'?v:v*g; inc+=a; if(Math.abs(a)>=0.5) L.push({txt:c+(sb?' ('+sb+')':''),amt:a}); }
+  for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && r.start===ym){ inc-=r.amount*g; L.push({txt:r.name+' (incidenteel, zie hieronder)',amt:-r.amount*g}); }
+  for(const e of S.expected) if(e.kind==='in' && e.ym===ym){ inc-=e.amount*g; L.push({txt:(e.note||e.cat)+' (incidenteel, zie hieronder)',amt:-e.amount*g}); }
+  return {inc,incL:L};
+}
+function planExp(ym){
+  _peMemo ||= {}; if(_peMemo[ym]!=null) return _peMemo[ym];
+  const y=+ym.slice(0,4), m=+ym.slice(5,7), cy=curY(), base=expenseBase(), baseM=sum(Object.values(base.cats));
+  let v;
+  if(y>cy && cpiOn()){ const P=cpiProj(), fnk=fixNowByKey(); let d=0; const inM={};
+    for(const r of S.recurring) if(r.kind==='uit'&&dueIn(r,ym)){ const k=recKey(r); inM[k]=(inM[k]||0)+ +r.amount; }
+    for(const k of new Set([...Object.keys(inM),...Object.keys(fnk)])) d+=((inM[k]||0)-(fnk[k]||0)/12)*((P.F[k]||{})[y]??1);
+    v=cpiExpYear(y)/12+d; }
+  else { const f=y>cy?infFor(y):1; v=baseM*f+(fixedInMonths(y,m,m)-fixedNowAnnual()/12)*f; }
+  return _peMemo[ym]=Math.max(0,v);
+}
 function prognosis(){
   const cy=curY(); const st=monthStatus(curYm()); const base=expenseBase(); const baseM=sum(Object.values(base.cats));
   let v=st.total, infF=1, groF=1; const rows=[];
@@ -799,7 +922,10 @@ function prognosis(){
   const rOne=sum(S.actuals.filter(a=>a.kind==='uit'&&!a.grid&&a.monthTotal==null&&a.date>todayStr()&&a.date.slice(0,4)===String(cy)).map(a=>+a.amount))
     + sum(S.expected.filter(e=>e.kind==='uit'&&e.ym>curYm()&&e.ym.slice(0,4)===String(cy)).map(e=>+e.amount));
   const fixNow=fixedNowAnnual(), rFix=restM?fixedInMonths(cy,cm+1,12)-fixNow*restM/12:0;
-  const rExp=baseM*restM+rFix+rOne, rRet=v*(yp(cy).rend-S.settings.box3)/100*restM/12;
+  /* Rendement: de eerste jaren per rekening (zelfde berekening als Planning per maand), daarna het percentage uit Instellingen */
+  const RY=S.settings.rendYears??3, retY={};
+  if(RY>0){ try{ const n=ymI((cy+RY)+'-12')-ymI(curYm()); if(n>0) for(const r of kortPlan(0,n).rows){ const yy=+r.ym.slice(0,4); retY[yy]=(retY[yy]||0)+r.ret; } }catch(e){} }
+  const rExp=baseM*restM+rFix+rOne, rRet=retY[cy]!=null?retY[cy]-v*S.settings.box3/100*restM/12:v*(yp(cy).rend-S.settings.box3)/100*restM/12;
   const rest={months:restM,begin:v,inc:rInc,exp:rExp,oneOff:rOne,fix:rFix,ret:rRet,end:v+rRet+rInc-rExp};
   v=rest.end; const useCpi=cpiOn(), fnk=useCpi?fixNowByKey():null;
   for(let y=cy+1;y<=cy+30;y++){
@@ -813,7 +939,7 @@ function prognosis(){
     const plan=sum(S.planned.filter(x=>+x.year===y).map(x=>x.amount))*infF + oneOff;
     const cpi=useCpi, fixAdj=cpi?cpiFixAdj(y,fnk):(fixedInMonths(y,1,12)-fixNow)*infF;
     const exp=Math.max(0,(cpi?cpiExpYear(y):baseM*12*infF)+fixAdj)+plan;
-    const begin=v; const ret=begin*(p.rend-S.settings.box3)/100;
+    const begin=v; const ret=retY[y]!=null?retY[y]-begin*S.settings.box3/100:begin*(p.rend-S.settings.box3)/100;
     v=begin+ret+inc-exp;
     rows.push({y,begin,inc,exp,plan,fixAdj,ret,end:v,infF,incByCat,incByPerson,incByPC,decPC,p});
   }
@@ -1193,13 +1319,18 @@ const ICON = {
   prognose:'<path d="M3 3v18h18M7 15l4-4 3 3 6-7"/>',
   instellingen:'<path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
 };
-const VIEWS = [['overzicht','Overzicht'],['rekeningen','Rekeningen'],['kort','Komende maanden'],['vrij','Vrij geld'],['inkomen','Inkomen plannen'],['invoer','Invoeren'],['maand','Maand'],['analyse','Analyse'],['vast','Vaste posten'],['investeringen','Investeringen'],['rendement','Rendement'],['prognose','30 jaar'],['instellingen','Instellingen']];
+const VIEWS = [['overzicht','Overzicht'],['rekeningen','Rekeningen'],['kort','Planning per maand'],['vrij','Vrij geld'],['inkomen','Inkomen'],['invoer','Invoeren per maand'],['maand','Maandoverzicht'],['analyse','Analyse'],['vast','Vast en terugkerend'],['investeringen','Grote uitgaven'],['rendement','Rendement'],['prognose','Planning per jaar'],['instellingen','Instellingen']];
+/* Menu in hoofdonderdelen; binnen een onderdeel tabbladen */
+const NAV=[['overzicht','Overzicht',['overzicht']],['rekeningen','Rekeningen',['rekeningen']],['invoeren','Invoeren',['invoer','vast','investeringen','maand']],['planning','Planning',['kort','prognose','vrij','inkomen']],['analyse','Analyse',['analyse']],['rendement','Rendement',['rendement']],['instellingen','Instellingen',['instellingen']]];
+const SUBNAME={invoer:'Per maand',vast:'Vast en terugkerend',investeringen:'Grote uitgaven',maand:'Maandoverzicht',kort:'Per maand',prognose:'Per jaar (30 jaar)',vrij:'Vrij geld',inkomen:'Inkomen'};
+const lastSub={};
+const navOf=v=>NAV.find(n=>n[2].includes(v));
 let anPieYear=null, anPieCat=null, anCmp=null;
 let view='overzicht', selYm=null, openHist={}, gridYm=null, gridOpen={}, anKind='uit', anPer='last12', anYm=null, anFrom=null, anTo=null, anFocus=null, anSubs=true, invKind='uit', invMode=null, invFwd=true, invView='maand';
 
 function renderNav(){
   $('#nav').innerHTML=`<div class="brand">Huishoudfinanciën<small>${esc(S.settings.people.join(' & '))}</small></div>`+
-    VIEWS.map(([k,l])=>`<a href="#${k}" class="${k===view?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>${l}</a>`).join('');
+    NAV.map(([k,l,subs])=>`<a href="#${k}" class="${subs.includes(view)?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON[{invoeren:'invoer',planning:'prognose'}[k]||k]}</svg>${l}</a>`).join('');
 }
 function isEmptyData(){ return !S.demo && !S.accounts.length && !S.actuals.length && !S.recurring.length; }
 function demoBanner(){ if(S.loading) return `<div class="info">Gegevens laden…</div>`; if(isEmptyData()) return `<div class="info"><b>Nog geen gegevens.</b> Zet je gegevens over uit de vorige versie van de app: open daar <b>Instellingen → Back-up kopiëren</b> (of downloaden), en kies hier <a href="#instellingen">Instellingen → Back-up plakken</a> (of terugzetten).</div>`; return S.demo?`<div class="warn">Je bekijkt <b>verzonnen voorbeeldgegevens</b>. Wis ze via Instellingen voordat je echte gegevens invoert.</div>`:''; }
@@ -1208,6 +1339,33 @@ function completeness(st){
   if(st.missing.length) h+=`<div class="warn">Totaal niet volledig bekend: geen saldo voor ${st.missing.map(esc).join(', ')}.</div>`;
   if(st.stale.length) h+=`<div class="small muted">Laatst bekende waarde gebruikt voor: ${st.stale.map(s=>esc(s.name)+' ('+dNl(s.date)+')').join(', ')}.</div>`;
   return h;
+}
+/* ============ Te doen: wat de app mist of wat binnenkort speelt ============ */
+function todoItems(){
+  const T=[], today=todayStr(), c=ymI(curYm());
+  try{ if(typeof PEND_KEY!=='undefined' && localStorage.getItem(PEND_KEY)) T.push({ic:'⏳',t:'Wijzigingen wachten op een internetverbinding',d:'Ze worden automatisch opgeslagen zodra je weer online bent.'}); }catch(e){}
+  if(typeof LDIR!=='undefined' && LDIR && ldirPerm!=='granted') T.push({ic:'📁',t:'Geef opnieuw toegang tot je lokale map',d:'Dan houdt de app de kopie op je laptop bij.',a:'ldirGrant'});
+  for(const a of openAccs()){ const m=currentOf(a.id);
+    if(!m){ T.push({ic:'💶',t:`Saldo invoeren: ${a.name}`,d:'Nog nooit een saldo ingevoerd; telt niet mee in je vermogen.',a:'meas',id:a.id}); continue; }
+    if(a.type!=='deposito' && !(a.type==='goud'&&a.gram) && daysBetween(m.date,today)>45) T.push({ic:'💶',t:`Saldo bijwerken: ${a.name}`,d:`Laatst ingevoerd op ${dNl(m.date)}.`,a:'meas',id:a.id}); }
+  for(const a of S.accounts){ if(a.closed) continue; const e=a.type==='lijfrente'?a.lfDepEnd:endDateOf(a); if(e && e>=today && daysBetween(today,e)<=60) T.push({ic:'📅',t:`${a.name} loopt af op ${dNl(e)}`,d:'Bedenk wat je met het geld doet en pas zo nodig de rekening aan.',h:'#rekeningen'}); }
+  for(let i=c-3;i<c;i++){ const ym=iYm(i); if(ym<showFrom()+'-01') continue; if(!S.actuals.some(x=>x.kind==='uit'&&x.date.slice(0,7)===ym&&!isInv(x))) T.push({ic:'🧾',t:`Uitgaven van ${mLong(ym)} invullen`,d:'Nog geen werkelijke uitgaven voor deze maand.',h:'#invoer',ym}); }
+  if(!S.settings.hgMigrated && S.settings.hmap && Object.keys(S.settings.hmap).length){ const left=S.expCats.filter(cat=>groupOf('uit',cat,null)===NOGROUP); if(left.length) T.push({ic:'🗂️',t:`${left.length} categorie${left.length===1?'':'ën'} nog niet in een hoofdgroep`,d:left.slice(0,4).join(', ')+(left.length>4?'…':''),h:'#instellingen',sec:'hg'}); }
+  if(S.cpi && S.cpi.at && daysBetween(S.cpi.at,today)>40) T.push({ic:'📈',t:'CBS-cijfers zijn ouder dan een maand',d:'Open Analyse → Persoonlijke inflatie en klik op "Nu ophalen".',h:'#analyse',an:'inflatie'});
+  for(const p of S.settings.people){ if(!personInfo(p).birth) T.push({ic:'👤',t:`Geboortedatum invullen voor ${p}`,d:'Nodig voor de AOW-datum en de planning.',h:'#instellingen',sec:'pers'}); }
+  return T;
+}
+function todoCard(){
+  const T=todoItems();
+  return `<div class="card" style="margin-top:18px"><h2>Te doen ${T.length?`<span class="badge w">${T.length}</span>`:''}</h2>
+  ${T.length?T.map((x,i)=>`<div class="row" style="gap:10px;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer" data-a="todo" data-i="${i}"><span style="font-size:18px">${x.ic}</span><div style="flex:1;min-width:0"><div style="font-weight:600">${esc(x.t)}</div><div class="small muted">${esc(x.d)}</div></div><span class="muted">›</span></div>`).join(''):'<p class="muted">Alles is bijgewerkt. 👍</p>'}</div>`;
+}
+function todoGo(i){ const x=todoItems()[+i]; if(!x) return;
+  if(x.a==='meas'){ measForm(accById(x.id)); return; }
+  if(x.a==='ldirGrant'){ ldirGrant(); return; }
+  if(x.ym){ gridYm=x.ym; invView='maand'; invKind='uit'; }
+  if(x.sec) setSec=x.sec; if(x.an) anSec=x.an;
+  if(x.h){ if(location.hash===x.h) render(); else location.hash=x.h; window.scrollTo(0,0); }
 }
 function vOverzicht(){
   const cur=curYm(), st=monthStatus(cur), mo=monthOverview(cur), tr=totalRend(curY());
@@ -1223,6 +1381,7 @@ function vOverzicht(){
     <div class="tile alt2"><div class="lbl">Deze maand: in / uit</div><div class="val" style="font-size:19px">${E(mo.tIn.geld)} <span class="muted" style="font-weight:400">/</span> ${E(mo.tUit.geld)}</div><div class="note">Werkelijk waar ingevuld, anders verwacht</div></div>
     <div class="tile alt3"><div class="lbl">Rendement ${curY()}</div><div class="val">${tr?P(tr.pct):'–'}</div><div class="note">${tr&&tr.eur!=null?E(tr.eur)+' · rente verwacht, waarde tot nu':'Nog onvoldoende gegevens'}</div></div>
   </div>
+  ${todoCard()}
   <div class="card" style="margin-top:18px">${completeness(st)}<h2>Vermogen per maand</h2>${lineChart({labels,series:[{name:'Totaal vermogen',values:tot,color:'#1d5fbf',markHollow:true},{name:'Direct beschikbaar',values:bes,color:'#93b8ea'}],hollow})}<div class="small muted">Een open rondje betekent: van minstens één rekening was in die maand nog helemaal geen waarde bekend. Rekeningen zonder meting in een maand tellen mee met hun laatst bekende waarde.</div></div>
   <div class="grid g2">
     <div class="card"><h2>Inkomsten en uitgaven, laatste 12 maanden</h2>${barChart({labels:l12,series:[{name:'Inkomsten',values:inc,color:'#1d5fbf'},{name:'Uitgaven (incl. afschrijving)',values:exp,color:'#d9773a'}]})}</div>
@@ -1332,7 +1491,7 @@ function onceForm(person){
 /* ============ Komende 12 maanden: kortetermijnoverzicht per maand ============ */
 let kortOff=0, kortInc='plan';
 function lastFullMonths(n){ const c=ymI(curYm()); return Array.from({length:n},(_,i)=>iYm(c-n+i)); }
-function histAvg(kind){ const ms=lastFullMonths(12), set=new Set(ms), per={};
+function histAvg(kind){ const ms=lastFullMonths(kind==='uit'?baseN():12), set=new Set(ms), per={};
   for(const a of S.actuals){ if(a.kind!==kind||isInv(a)) continue; const ym=a.date.slice(0,7); if(!set.has(ym)) continue; per[ym]=(per[ym]||0)+ +a.amount; }
   const filled=Object.keys(per); return {avg:filled.length?sum(Object.values(per))/filled.length:0, n:filled.length}; }
 const isOnceRec = r => r.end && r.end===r.start;
@@ -1370,14 +1529,7 @@ function futureOutflow(ym,k){ return sum(futureOutflowItems(ym,k).map(x=>x.amt))
 /* Correcties op het rendement:
    - aankopen en incidentele uitgaven: het saldo wordt lager, dus er komt minder rente binnen (gemiddelde spaarrente van je vrij opneembare rekeningen);
    - maandelijks overschot (inkomsten − uitgaven): dat staat op je spaarrekening en levert spaarrente op (gemiddelde spaarrente). */
-function regularFlow(ym){
-  let inc=0;
-  if(kortInc==='hist') inc=histAvg('in').avg;
-  else { const o=expIncome(ym); for(const subs of Object.values(o)) for(const v of Object.values(subs)) inc+=v;
-    for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && r.start===ym) inc-=+r.amount;
-    for(const e of S.expected) if(e.kind==='in' && e.ym===ym) inc-=+e.amount; }
-  return {inc, exp:histAvg('uit').avg};
-}
+function regularFlow(ym){ return {inc:planInc(ym).inc, exp:planExp(ym)}; }
 function avgRate(list,ym){ const w=sum(list.map(a=>(currentOf(a.id)||{}).value||0)); return w?sum(list.map(a=>((currentOf(a.id)||{}).value||0)*rateAt(a,ym+'-01')))/w:0; }
 function cashInterest(months){
   const c=ymI(curYm());
@@ -1423,12 +1575,8 @@ function kortPlan(off=kortOff,count=12){
   for(let k=1;k<=H;k++){
     const ym=iYm(c+k), inFirst=d=> k===1 ? (d>today && d.slice(0,7)<=ym) : d.slice(0,7)===ym;
     // reguliere inkomsten
-    let inc=0; const incL=[];
-    if(kortInc==='hist'){ inc=hi.avg; incL.push({txt:'Gemiddelde inkomsten',amt:hi.avg}); for(const x of lfIncome(ym)){ inc+=x.v; incL.push({txt:'Lijfrente ('+x.p+')',amt:x.v}); } }
-    else { const o=expIncome(ym); for(const [c,subs] of Object.entries(o)) for(const [sb,v2] of Object.entries(subs)){ inc+=v2; if(Math.abs(v2)>=0.5) incL.push({txt:c+(sb?' ('+sb+')':''),amt:v2}); }
-      for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && r.start===ym){ inc-=+r.amount; incL.push({txt:r.name+' (incidenteel, zie hieronder)',amt:-r.amount}); }
-      for(const e of S.expected) if(e.kind==='in' && e.ym===ym){ inc-=+e.amount; incL.push({txt:(e.note||e.cat)+' (incidenteel, zie hieronder)',amt:-e.amount}); } }
-    const exp=hu.avg;
+    const {inc,incL}=planInc(ym);
+    const exp=planExp(ym);
     // incidenteel
     const incI=[], expI=[], inv=[];
     for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && (k===1? r.start>=curYm()&&r.start<=ym : r.start===ym)) incI.push({txt:r.name+(r.person?' ('+r.person+')':''),amt:+r.amount});
@@ -1505,14 +1653,14 @@ function vKort(){
     ...(hasFut?[{name:'Verwacht vermogen',values:rows.map((r,i)=>!r.past?r.end:(rows[i+1]&&!rows[i+1].past?r.end:null)),color:'#1d5fbf',dash:hasPast}]:[]),
     {name:'Waarvan vrij opneembaar',values:rows.map(r=>r.vrij),color:'#93b8ea'}],h:240});
   const evList=rows.flatMap(r=>[...r.incI.map(x=>({ym:r.ym,t:'in',...x})),...r.expI.map(x=>({ym:r.ym,t:'uit',...x})),...r.inv.map(x=>({ym:r.ym,t:'inv',...x}))]);
-  return `<div class="row"><div><h1>Komende maanden</h1><p class="sub">Je vermogen per maand, met inkomsten, uitgaven, incidentele bedragen en investeringen. Blader onbeperkt vooruit (verwachting) en terug (werkelijke cijfers). Zonder afschrijving: investeringen tellen in de maand van betaling.</p></div></div>${demoBanner()}
+  return `<div class="row"><div><h1>Planning per maand</h1><p class="sub">Je vermogen per maand, met inkomsten, uitgaven, incidentele bedragen en investeringen. Blader onbeperkt vooruit (verwachting) en terug (werkelijke cijfers). Zonder afschrijving: investeringen tellen in de maand van betaling.</p></div></div>${demoBanner()}
   <div class="card"><h2>Per maand</h2><p class="small muted">Scroll de tabel naar links of rechts. Grijs = werkelijk, wit = verwacht.</p>
     <div class="ywrap" id="kortWrap">${kortTableHtml()}</div></div>
   <div class="card"><div class="row"><button class="btn sec sm" data-a="kortOff" data-d="-12" title="12 maanden terug">«</button><button class="btn sec sm" data-a="kortOff" data-d="-1" title="Maand terug">‹</button>
     <span class="small muted">Tegels en grafieken:</span> <b style="font-size:16px">${mLong(first.ym)} – ${mLong(last.ym)}</b>
     <button class="btn sec sm" data-a="kortOff" data-d="1" title="Maand verder">›</button><button class="btn sec sm" data-a="kortOff" data-d="12" title="12 maanden verder">»</button>${kortOff!==0?'<button class="btn ghost sm" data-a="kortOff" data-d="0">Naar nu</button>':''}
     <span class="spacer"></span><span class="small" style="font-weight:600;color:var(--b800)">Inkomsten:</span>
-    <div class="toggle"><button data-a="kortInc" data-v="plan" class="${kortInc==='plan'?'on':''}">Volgens Inkomen plannen</button><button data-a="kortInc" data-v="hist" class="${kortInc==='hist'?'on':''}">Gemiddelde laatste 12 mnd</button></div></div></div>
+    <div class="toggle"><button data-a="kortInc" data-v="plan" class="${kortInc==='plan'?'on':''}">Volgens Inkomen</button><button data-a="kortInc" data-v="hist" class="${kortInc==='hist'?'on':''}">Gemiddelde laatste 12 mnd</button></div></div></div>
 
   <div class="grid g4">
     <div class="tile"><div class="lbl">Vermogen nu</div><div class="val">${E(pl.start.total)}</div><div class="note">vrij opneembaar ${E(pl.start.besch)}</div></div>
@@ -1535,7 +1683,7 @@ function vInkomen(){
     return `<div class="card"><div class="row"><h2 style="margin:0">${esc(pp)}</h2><span class="spacer"></span><button class="btn sec sm" data-a="incOnce" data-p="${esc(pp==='Samen'?'':pp)}">+ Eenmalig bedrag</button><button class="btn sm" data-a="incAdd" data-p="${esc(pp==='Samen'?'':pp)}">+ Inkomen toevoegen</button></div>
       ${list.length?`<div class="tablewrap" style="margin-top:10px"><table><tr><th>Soort</th><th>Omschrijving</th><th class="n">Netto bedrag</th><th>Vanaf / maand</th><th>Tot en met</th><th></th></tr>${list.map(r=>{ const pm=r.amount/(+r.freq||1);
         const once=r.end&&r.end===r.start;
-        return `<tr><td>${esc(r.cat)}</td><td>${esc(r.name)}${once?' <span class="badge">eenmalig</span>':+r.freq>1?` <span class="small muted">(${E(r.amount)} ${FREQ[r.freq].toLowerCase()})</span>`:''}</td><td class="n"><b>${once?E(r.amount):E(pm)}</b>${once?'<div class="small muted">in één keer</div>':''}</td><td>${mLong(r.start)}</td><td>${once?'<span class="muted">–</span>':until(r)}</td><td class="n" style="white-space:nowrap"><button class="btn ghost sm" data-a="editRec" data-id="${r.id}">Wijzig</button><button class="btn ghost sm" data-a="delRec" data-id="${r.id}" title="Verwijderen">✕</button></td></tr>`; }).join('')}</table></div>`
+        return `<tr><td>${esc(r.cat)}</td><td>${esc(r.name)}${once?' <span class="badge">eenmalig</span>':+r.freq>1?` <span class="small muted">(${E(r.amount)} ${FREQ[r.freq].toLowerCase()})</span>`:''}</td><td class="n"><b>${once?E(r.amount):E(pm)}</b>${once?'<div class="small muted">in één keer</div>':''}</td><td>${mLong(r.start)}</td><td>${once?'<span class="muted">–</span>':until(r)}</td><td class="n" style="white-space:nowrap">${attBtn(r)}<button class="btn ghost sm" data-a="editRec" data-id="${r.id}">Wijzig</button><button class="btn ghost sm" data-a="delRec" data-id="${r.id}" title="Verwijderen">✕</button></td></tr>`; }).join('')}</table></div>`
       :`<p class="muted small" style="margin-top:8px">${pp==='Samen'?'Inkomsten die niet bij één persoon horen, bijvoorbeeld huur van een tweede woning.':'Nog niets ingevuld. Voeg bijvoorbeeld salaris, pensioen en AOW toe, elk met een begin- en einddatum.'}</p>`}</div>`; };
   // grafiek: totaal netto per jaar, per persoon en per soort inkomen (euro's van nu)
   const cy=curY(), years=Array.from({length:31},(_,i)=>cy+i);
@@ -1553,7 +1701,7 @@ function vInkomen(){
   const chart=series.length?stackChart({labels:years.map(String),series,h:280,step:5000}).replace(/<div class="legend">[\s\S]*<\/div>$/,'')+`<div class="legend lgroups">${legend.join('')}</div>`:'<p class="muted">Nog geen inkomsten ingevuld.</p>';
   const cf=incomeConflicts();
   const warn=(cf.plan.length||cf.exp.length)?`<div class="warn"><b>Let op:</b> bij <b>Invoeren</b> staan ook nog verwachte inkomsten voor de toekomst${cf.plan.length?` (${cf.plan.length} keer bij het jaaroverzicht)`:''}${cf.exp.length?` en ${cf.exp.length} losse verwachting${cf.exp.length===1?'':'en'}`:''}. Die gaan vóór wat hier staat en kunnen dubbel tellen of inkomsten wegdrukken. Wil je alles op deze ene pagina regelen? <button class="btn sm" data-a="incClear" style="margin-left:6px">Verwachtingen bij Invoeren wissen</button><div class="small" style="margin-top:4px">Werkelijk ontvangen bedragen uit het verleden blijven gewoon staan.</div></div>`:'';
-  return `<div class="row"><div><h1>Inkomen plannen</h1><p class="sub">Eén plek voor al jullie netto inkomsten, nu en in de toekomst.</p></div></div>${demoBanner()}
+  return `<div class="row"><div><h1>Inkomen</h1><p class="sub">Eén plek voor al jullie netto inkomsten, nu en in de toekomst.</p></div></div>${demoBanner()}
 
   ${warn}
   ${people.filter(p=>p!=='Samen').map(card).join('')}
@@ -1819,6 +1967,15 @@ function applySetSec(){
   if(!$('#setSecBar')){ const anchor=main.querySelector('.warn')||main.querySelector('p.sub'); if(anchor) anchor.insertAdjacentHTML('afterend',`<div id="setSecBar" class="toggle" style="margin:12px 0;flex-wrap:wrap">${SET_SECS.map(([k,l])=>`<button data-a="setSec" data-v="${k}" class="${k===setSec?'on':''}">${l}</button>`).join('')}</div>`); }
   else $('#setSecBar').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===setSec));
 }
+/* Rendement in onderdelen */
+let rendSec='verwacht';
+const REND_SECS=[['verwacht','Verwacht',/^verwacht rendement/i],['totnu','Tot nu',/^(rendement tot nu|verwacht tegenover|handmatig)/i],['box3','Box 3',/^vermogensbelasting/i],['verdeling','Verdeling',/^verdeling van je vermogen/i]];
+function applyRendSec(){
+  const main=$('#main'); if(!main) return;
+  main.querySelectorAll('.card').forEach(c=>{ const h=((c.querySelector('h2')||{}).textContent||'').trim(); const d=REND_SECS.find(x=>x[2].test(h)); if(d) c.style.display=d[0]===rendSec?'':'none'; });
+  if(!$('#rendSecBar')){ const anchor=main.querySelector('.warn')||main.querySelector('.row'); if(anchor) anchor.insertAdjacentHTML('afterend',`<div id="rendSecBar" class="toggle" style="margin:12px 0;flex-wrap:wrap">${REND_SECS.map(([k,l])=>`<button data-a="rendSec" data-v="${k}" class="${k===rendSec?'on':''}">${l}</button>`).join('')}</div>`); }
+  else $('#rendSecBar').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===rendSec));
+}
 function hgAction(a,b){
   const kind=hgKind, list=hgList(kind), M=hgMap();
   if(a==='hgSel'){ hgSel=b.dataset.id; }
@@ -1836,49 +1993,51 @@ function hgAction(a,b){
 /* ============ Korte uitleg bij elke tabel en grafiek (vraagteken) ============
    [wat je ziet, waar het vandaan komt, waar het naartoe gaat] */
 const CARD_HELP=[
- ['Vermogen per maand, per rekening',['De stand van elke rekening aan het eind van elke maand, met de datum van het gebruikte saldo.','Je ingevoerde saldi (Rekeningen → Saldo invoeren). Een saldo op de 1e telt als stand van de vorige maand.','Dezelfde totalen als Vermogen per maand op het Overzicht en Vermogen eind bij Komende maanden.']],
- ['Vermogen per maand',['Je totale vermogen en het direct beschikbare deel, per maand.','De laatst bekende saldi van al je rekeningen per maandeinde.','Startpunt voor Komende maanden, Vrij geld en de 30-jaarsplanning.']],
- ['Inkomsten en uitgaven, laatste 12 maanden',['Wat er per maand binnenkwam en uitging.','Invoeren (werkelijk) en anders de verwachting uit Vaste posten. Investeringen tellen mee als afschrijving per maand.','Ook te zien bij Maand en Analyse.']],
- ['Komende 12 maanden',['Wijzigingen die eraan komen: nieuwe of aflopende vaste posten en verwachte uitgaven.','Vaste posten, Invoeren → Verwachting en Investeringen.','Rekent mee in Komende maanden en Vrij geld.']],
- ['Erin en eruit per maand',['Per maand wat erin komt (links) en wat eruit gaat (rechts).','Werkelijke maanden: Invoeren. Toekomst: verwachte inkomsten, gemiddelde uitgaven, Vaste posten en Investeringen.','Bepaalt het verwachte vermogen bij Komende maanden.']],
- ['Per maand uitgerekend',['De berekening per maand: begin + inkomsten − uitgaven ± rendement = eind.','Grijs = werkelijk (saldi en Invoeren), wit = verwachting.','Het eindvermogen is het begin van de volgende maand en van de 30-jaarsplanning.']],
- ['Per maand',['De berekening per maand: begin + inkomsten − uitgaven ± rendement = eind.','Grijs = werkelijk (saldi en Invoeren), wit = verwachting.','Het eindvermogen is het begin van de volgende maand en van de 30-jaarsplanning.']],
- ['Verloop vrij opneembaar tegoed',['Hoeveel geld je vrij kunt opnemen, per maand vooruit.','Saldi van rekeningen met "direct beschikbaar", plus aflopende deposito\'s en rente.','Laat zien wanneer vastgezet geld vrijkomt.']],
+ ['Vermogen per maand, per rekening',['De stand van elke rekening aan het eind van elke maand, met de datum van het gebruikte saldo.','Je ingevoerde saldi (Rekeningen → Saldo invoeren). Een saldo op de 1e telt als stand van de vorige maand.','Dezelfde totalen als Vermogen per maand op het Overzicht en Vermogen eind bij Planning per maand.']],
+ ['Vermogen per maand',['Je totale vermogen en het direct beschikbare deel, per maand.','De laatst bekende saldi van al je rekeningen per maandeinde.','Startpunt voor Planning per maand, Vrij geld en Planning per jaar.']],
+ ['Inkomsten en uitgaven, laatste 12 maanden',['Wat er per maand binnenkwam en uitging.','Invoeren (werkelijk) en anders de verwachting uit Vast en terugkerend. Investeringen tellen mee als afschrijving per maand.','Ook te zien bij Maand en Analyse.']],
+ ['Te doen',['Wat er ontbreekt of binnenkort speelt: saldi bijwerken, uitgaven invullen, aflopende deposito\'s, categorieën indelen.','De app kijkt zelf naar je rekeningen, Invoeren, Instellingen en de CBS-cijfers.','Klik op een punt om er direct naartoe te gaan. Is iets geregeld, dan verdwijnt het vanzelf.']],
+ ['Komende 12 maanden',['Wijzigingen die eraan komen: nieuwe of aflopende vaste posten en verwachte uitgaven.','Vast en terugkerend, Invoeren (verwachting) en Grote uitgaven.','Rekent mee in Planning per maand en Vrij geld.']],
+ ['Erin en eruit per maand',['Per maand wat erin komt (links) en wat eruit gaat (rechts).','Werkelijke maanden: Invoeren. Toekomst: verwachte inkomsten, gemiddelde uitgaven, Vast en terugkerend en Grote uitgaven.','Bepaalt het verwachte vermogen bij Planning per maand.','Zelfde bedragen als de tabel Per maand: gemiddelde van {BN} maanden, inflatie vanaf volgend jaar, grote uitgaven in de maand van betaling.']],
+ ['Per maand uitgerekend',['De berekening per maand: begin + inkomsten − uitgaven ± rendement = eind.','Grijs = werkelijk (saldi en Invoeren), wit = verwachting.','Het eindvermogen is het begin van de volgende maand en van Planning per jaar.','Uitgaven = gemiddelde van {BN} maanden; inflatie en inkomensgroei vanaf volgend jaar; veranderende vaste lasten alleen het verschil; grote uitgaven volledig in de maand van betaling; rendement de eerste {RY} jaar per rekening, daarna het percentage uit Instellingen.']],
+ ['Per maand',['De berekening per maand: begin + inkomsten − uitgaven ± rendement = eind.','Grijs = werkelijk (saldi en Invoeren), wit = verwachting.','Het eindvermogen is het begin van de volgende maand en van Planning per jaar.','Uitgaven = gemiddelde van {BN} maanden; inflatie en inkomensgroei vanaf volgend jaar; veranderende vaste lasten alleen het verschil; grote uitgaven volledig in de maand van betaling; rendement de eerste {RY} jaar per rekening, daarna het percentage uit Instellingen.']],
+ ['Verloop vrij opneembaar tegoed',['Hoeveel geld je vrij kunt opnemen, per maand vooruit.','Saldi van rekeningen met "direct beschikbaar", plus aflopende deposito\'s en rente.','Laat zien wanneer vastgezet geld vrijkomt.','Alleen rekeningen met "direct beschikbaar"; deposito\'s pas op de einddatum. Inkomsten en uitgaven als bij Planning per maand.']],
  ['Vastgezet geld',['Deposito\'s en ander vastgezet geld, met de datum waarop het vrijkomt.','Rekeningen zonder "direct beschikbaar", met einddatum en rente.','Komt terug in Vrij geld en het verwachte rendement.']],
  ['Uitgaven per categorie',['Waar je geld naartoe ging in de gekozen periode, van groot naar klein.','Werkelijke uitgaven uit Invoeren; investeringen als afschrijving.','Basis voor je persoonlijke inflatie en de gemiddelde uitgaven in de planning.']],
- ['Inkomsten per categorie',['Waar je geld vandaan kwam in de gekozen periode.','Werkelijke inkomsten uit Invoeren.','Vergelijk met Inkomen plannen.']],
+ ['Inkomsten per categorie',['Waar je geld vandaan kwam in de gekozen periode.','Werkelijke inkomsten uit Invoeren.','Vergelijk met Planning → Inkomen.']],
  ['Uitgaven per maand, per categorie',['Per maand je uitgaven, opgebouwd uit hoofdgroepen of categorieën.','Werkelijke uitgaven uit Invoeren, plus afschrijving van investeringen.','Hetzelfde als de tabel Uitgaven per categorie, maar per maand.']],
- ['Inkomsten per maand, per categorie',['Per maand je inkomsten, opgebouwd uit hoofdgroepen of categorieën.','Werkelijke inkomsten uit Invoeren.','Vergelijk met Inkomen plannen.']],
+ ['Inkomsten per maand, per categorie',['Per maand je inkomsten, opgebouwd uit hoofdgroepen of categorieën.','Werkelijke inkomsten uit Invoeren.','Vergelijk met Planning → Inkomen.']],
  ['Uitgaven per jaar',['Je totale uitgaven per jaar. Klik op een jaar voor de verdeling.','Werkelijke uitgaven uit Invoeren, plus afschrijving.','Basis voor Jaren vergelijken.']],
  ['Inkomsten per jaar',['Je totale inkomsten per jaar. Klik op een jaar voor de verdeling.','Werkelijke inkomsten uit Invoeren.','Basis voor Jaren vergelijken.']],
  ['Verdeling van je vermogen',['Je vermogen per soort (sparen, deposito\'s, beleggingen …) met het verwachte rendement.','Huidige saldi; rendement uit je rentepercentages en verwachte rendementen.','Zelfde berekening als Verwacht rendement komende jaren.']],
  ['Verdeling',['De verdeling van het gekozen jaar. Klik op een stuk voor de onderverdeling.','Werkelijke bedragen uit Invoeren.','Zelfde cijfers als de tabel per categorie.']],
  ['Verloop van één categorie',['Het verloop per maand van de categorie of hoofdgroep waarop je klikte.','Werkelijke bedragen uit Invoeren.','Handig om uitschieters te vinden.']],
  ['Jaren vergelijken',['Hoofdgroepen of categorieën naast elkaar voor de jaren die je aanvinkt.','Werkelijke bedragen uit Invoeren.','Laat zien waar je meer of minder uitgeeft dan vroeger.']],
- ['Jouw persoonlijke inflatie',['Hoeveel duurder jouw uitgavenpakket wordt: jouw aandeel × de CBS-prijsstijging per categorie.','Je uitgaven van de laatste 12 maanden en de CBS-cijfers (gemiddelde van 12 maandcijfers).','30-jaarsplanning (vinkje) en reëel rendement bij Rendement.']],
- ['Verwacht rendement komende jaren',['Verwachte rente en rendement per rekening voor de komende jaren.','Saldi, rentepercentages, uitkeringsdata en je verwachte rendementen (Bewerken bij een rekening).','Komende maanden, Vrij geld en de 30-jaarsplanning.']],
+ ['Jouw persoonlijke inflatie',['Hoeveel duurder jouw uitgavenpakket wordt: jouw aandeel × de CBS-prijsstijging per categorie.','Je uitgaven van de laatste 12 maanden en de CBS-cijfers (gemiddelde van 12 maandcijfers).','Planning per jaar (vinkje) en reëel rendement bij Rendement.','Jouw aandeel per categorie over de laatste 12 maanden × CBS-prijsstijging (gemiddelde van 12 maandcijfers). Hypotheek telt niet mee.']],
+ ['Verwacht rendement komende jaren',['Verwachte rente en rendement per rekening voor de komende jaren.','Saldi, rentepercentages, uitkeringsdata en je verwachte rendementen (Bewerken bij een rekening).','Planning per maand, Vrij geld en Planning per jaar.','Deposito: vaste rente, uitbetaald naar de betaalrekening. Sparen: rente op rente. Beleggingen: jouw verwachte percentage. Na een einddatum: herbeleggen volgens Instellingen.']],
  ['Verwacht tegenover werkelijk',['Wat je verwachtte naast wat het werd, per afgelopen jaar.','De verwachting die de app vóór 1 januari onthield, en het rendement tot nu.','Helpt je verwachtingen bij te stellen.']],
- ['Vermogensbelasting (box 3)',['Een schatting van je box 3-belasting per jaar.','Saldi op 1 januari, de percentages van de Belastingdienst en je werkelijke rendement.','Alleen ter informatie; je aangifte is leidend.']],
+ ['Vermogensbelasting (box 3)',['Een schatting van je box 3-belasting per jaar.','Saldi op 1 januari, de percentages van de Belastingdienst en je werkelijke rendement.','Alleen ter informatie; je aangifte is leidend.','Saldi op 1 januari; percentages en heffingsvrij vermogen van de Belastingdienst; 36%. Je betaalt het laagste van forfaitair en werkelijk rendement.']],
  ['Rendement tot nu, per jaar',['Het behaalde rendement per rekening en in totaal.','Ontvangen rente, saldi en waardestijging min bijstortingen.','Vergelijk met Verwacht tegenover werkelijk.']],
  ['Handmatig ingevoerd',['Rendementen die je zelf hebt ingevuld.','De knop + Rendement handmatig.','Gaan vóór de berekende rendementen.']],
- ['Verwacht vermogen',['Je vermogen aan het eind van elk jaar, met inkomsten en uitgaven per jaar.','Vermogen nu, Inkomen plannen, gemiddelde uitgaven (24 mnd), Vaste posten, Investeringen en de aannames.','Lange termijn: kun je je plannen betalen?']],
- ['Verwachte netto-inkomsten per maand, per persoon',['Jullie verwachte netto-inkomsten per maand, per persoon en soort.','Inkomen plannen, Vaste posten en de inkomensgroei; AOW uit de geboortedatum.','Inkomsten in de 30-jaarsplanning.']],
- ['Aannames per jaar en uitkomst',['Per jaar de percentages en de uitkomst. Vul een vakje in om een jaar aan te passen.','Instellingen (standaard) en je persoonlijke inflatie (grijs).','Rekent direct door in Verwacht vermogen.']],
- ['Basis voor de uitgaven',['Je gemiddelde uitgaven per maand, het startpunt voor de toekomst.','Werkelijke uitgaven van de laatste 24 maanden, zonder investeringen.','30-jaarsplanning, met inflatie per jaar.']],
- ['Toekomstige aankopen',['Grote aankopen die je verwacht, met datum en bedrag.','Investeringen met een datum in de toekomst.','Tellen volledig mee in het jaar van betaling.']],
- ['Momenten in de planning',['Belangrijke momenten: stoppen met werken, pensioen, AOW.','Instellingen → Personen en Vaste posten.','Bepalen wanneer inkomsten veranderen in de planning.']],
- ['Inkomsten per persoon',['Verwachte inkomsten per persoon in het eerste planjaar.','Inkomen plannen en Vaste posten.','30-jaarsplanning.']],
- ['Zo ziet jullie inkomen eruit, per jaar',['Verwachte inkomsten per jaar, per persoon en soort.','Inkomen plannen en Vaste posten.','Komende maanden en de 30-jaarsplanning.']],
- ['Vaste lasten',['Vaste uitgaven die beginnen, stoppen of veranderen.','Wat je hier invult.','Alleen het verschil met nu telt mee in de planning.']],
- ['Vaste inkomsten',['Vaste inkomsten met start- en einddatum, zoals salaris, pensioen of AOW.','Wat je hier invult.','Inkomen plannen, Komende maanden en de 30-jaarsplanning.']],
- ['Kalender',['Wat er de komende 12 maanden verandert of afloopt.','Vaste posten en Investeringen.','Overzicht → Komende 12 maanden.']],
- ['Alle investeringen',['Al je investeringen met afschrijving per maand, wat al is afgeschreven en wat resteert. 📎 = bijlagen.','Uitgaven boven het grensbedrag (Instellingen), ingevoerd bij Invoeren of hier.','De afschrijving telt mee in je maanduitgaven en Analyse; de betaling zie je in je saldi.']],
+ ['Verwacht vermogen',['Je vermogen aan het eind van elk jaar, met inkomsten en uitgaven per jaar.','Vermogen nu, Planning → Inkomen, gemiddelde uitgaven ({BN} mnd), Vast en terugkerend, Grote uitgaven en de aannames.','Lange termijn: kun je je plannen betalen?','Elk jaar = de optelling van de twaalf maanden bij Per maand. Rendement de eerste {RY} jaar per rekening, daarna het percentage per jaar. Box 3 gaat eraf. Hypotheek stijgt niet mee met inflatie.']],
+ ['Verwachte netto-inkomsten per maand, per persoon',['Jullie verwachte netto-inkomsten per maand, per persoon en soort.','Planning → Inkomen, Vast en terugkerend en de inkomensgroei; AOW uit de geboortedatum.','Inkomsten in Planning per jaar.','Netto, in euro\'s van nu. Inkomensgroei vanaf volgend jaar; lijfrente groeit niet mee.']],
+ ['Aannames per jaar en uitkomst',['Per jaar de percentages en de uitkomst. Vul een vakje in om een jaar aan te passen.','Instellingen (standaard) en je persoonlijke inflatie (grijs).','Rekent direct door in Verwacht vermogen.','Leeg vakje = de standaard uit Instellingen. Inflatie en groei gaan in vanaf volgend jaar. Het rendementspercentage telt pas na de eerste {RY} jaar (daarvoor per rekening).']],
+ ['Basis voor de uitgaven',['Je gemiddelde uitgaven per maand, het startpunt voor de toekomst.','Werkelijke uitgaven van de laatste {BN} maanden (instelbaar), zonder grote uitgaven.','Planning per maand en per jaar, met inflatie vanaf volgend jaar.','Gemiddelde over {BN} maanden, zonder grote uitgaven en afschrijving (die tellen apart in de maand van betaling).']],
+ ['Toekomstige grote uitgaven',['Grote uitgaven met een datum in de toekomst, en of ze in één keer meetellen of worden afgeschreven.','Wat je bij Grote uitgaven (of bij Per maand als verwachting) invult.','Tellen mee in Planning: per maand in de maand van betaling, bij 30 jaar in het jaar van betaling.','Planning: het hele bedrag in de maand van betaling. Analyse: in één keer of verdeeld over het aantal maanden afschrijving.']],
+ ['Toekomstige aankopen',['Grote aankopen die je verwacht, met datum en bedrag.','Grote uitgaven met een datum in de toekomst.','Tellen volledig mee in het jaar van betaling.']],
+ ['Momenten in de planning',['Belangrijke momenten: stoppen met werken, pensioen, AOW.','Instellingen → Personen en Vast en terugkerend.','Bepalen wanneer inkomsten veranderen in de planning.']],
+ ['Inkomsten per persoon',['Verwachte inkomsten per persoon in het eerste planjaar.','Planning → Inkomen en Vast en terugkerend.','Planning per jaar.']],
+ ['Zo ziet jullie inkomen eruit, per jaar',['Verwachte inkomsten per jaar, per persoon en soort.','Planning → Inkomen en Vast en terugkerend.','Planning per maand en Planning per jaar.']],
+ ['Vaste lasten',['Vaste uitgaven die beginnen, stoppen of veranderen.','Wat je hier invult.','Alleen het verschil met nu telt mee in de planning.','Je huidige vaste lasten zitten al in het gemiddelde. Alleen het verschil met nu telt, vanaf de maand van de wijziging; daarna met inflatie (behalve hypotheek).']],
+ ['Vaste inkomsten',['Vaste inkomsten met start- en einddatum, zoals salaris, pensioen of AOW.','Wat je hier invult.','Planning → Inkomen, Planning per maand en Planning per jaar.','Netto bedragen in euro\'s van nu; de inkomensgroei komt er in de planning vanaf volgend jaar bij.']],
+ ['Kalender',['Wat er de komende 12 maanden verandert of afloopt.','Vast en terugkerend en Grote uitgaven.','Overzicht → Komende 12 maanden.']],
+ ['Alle investeringen',['Al je investeringen met afschrijving per maand, wat al is afgeschreven en wat resteert. 📎 = bijlagen.','Uitgaven boven het grensbedrag (Instellingen), ingevoerd bij Invoeren of hier.','De afschrijving telt mee in je maanduitgaven en Analyse; de betaling zie je in je saldi.','Afschrijving = bedrag ÷ aantal maanden, vanaf de maand van betaling. Alleen voor Analyse en Maandoverzicht; de planning rekent met de betaling.']],
  ['Investeringen in',['Investeringen in deze maand en hun afschrijving per maand.','Uitgaven boven het grensbedrag (Instellingen).','Afschrijving telt mee in de maanduitgaven; de betaling zie je in je saldi.']],
- ['Ingevoerd in deze maand',['Alles wat je voor deze maand hebt ingevoerd.','Invoeren.','Maand, Analyse en Komende maanden.']],
- ['Incidentele bedragen en investeringen in deze periode',['Losse bedragen en investeringen in de gekozen periode.','Invoeren en Investeringen.','Komende maanden en de planning.']],
+ ['Ingevoerd in deze maand',['Alles wat je voor deze maand hebt ingevoerd.','Invoeren.','Maand, Analyse en Planning per maand.']],
+ ['Incidentele bedragen en investeringen in deze periode',['Losse bedragen en investeringen in de gekozen periode.','Invoeren en Grote uitgaven.','Planning per maand en de planning.']],
  ['Goudprijs 24 karaat',['Huidige goudprijs per gram om de waarde van je goud bij te werken.','Goudonline.nl (zelf invullen of via de knop).','Waarde van je goudrekening.']],
  ['Vooruitblik renterekeningen',['Verwachte rente en saldo per renterekening.','Saldi, rente en verwachte inleg.','Verwacht rendement.']],
- ['Lijfrente en aanvullend pensioen',['Geblokkeerde lijfrenterekeningen met de verwachte uitkering per maand.','Saldo, (deposito)rente, startdatum, looptijd, uitkeringsrente en de belastingtarieven van 2026.','Netto-uitkering als inkomen in Inkomen plannen, Komende maanden en de 30-jaarsplanning. Telt niet mee in vermogen of box 3.']],
+ ['Lijfrente en aanvullend pensioen',['Geblokkeerde lijfrenterekeningen met de verwachte uitkering per maand.','Saldo, (deposito)rente, startdatum, looptijd, uitkeringsrente en de belastingtarieven van 2026.','Netto-uitkering als inkomen in Planning → Inkomen, Planning per maand en Planning per jaar. Telt niet mee in vermogen of box 3.']],
  ['Personen en pensioen',['Geboortedatum, stopdatum en pensioendatum per persoon.','Wat je hier invult.','AOW-datum en inkomsten in de planning.']]
 ].sort((a,b)=>b[0].length-a[0].length);
 function cardHelpKey(title){ const t=String(title||'').trim().toLowerCase(); const h=CARD_HELP.find(([k])=>t.startsWith(k.toLowerCase())); return h?h[0]:null; }
@@ -1888,9 +2047,9 @@ function addCardHelp(){
     const k=cardHelpKey(txt); if(!k) return;
     h.insertAdjacentHTML('beforeend',` <button class="helpbtn chelp" data-a="chelp" data-k="${esc(k)}" title="Uitleg" aria-label="Uitleg">?</button>`); });
 }
-function cardHelpModal(k){ const h=CARD_HELP.find(x=>x[0]===k); if(!h) return; const [wat,bron,naar]=h[1];
+function cardHelpModal(k){ const h=CARD_HELP.find(x=>x[0]===k); if(!h) return; const [wat,bron,naar,ugp]=h[1].map(t=>helpFill(t));
   $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal" style="max-width:480px"><h3>${esc(k)}</h3>
-  <p><b>Wat zie je</b><br>${esc(wat)}</p><p><b>Waar komt het vandaan</b><br>${esc(bron)}</p><p><b>Waar gaat het naartoe</b><br>${esc(naar)}</p>
+  <p><b>Wat zie je</b><br>${esc(wat)}</p><p><b>Waar komt het vandaan</b><br>${esc(bron)}</p><p><b>Waar gaat het naartoe</b><br>${esc(naar)}</p>${ugp?`<p><b>Uitgangspunten</b><br>${esc(ugp)}</p>`:''}
   <div class="actions"><span class="spacer"></span><button class="btn" id="chClose">Sluiten</button></div></div></div>`;
   $('#chClose').onclick=closeModal; $('#ov').addEventListener('mousedown',e=>{ if(e.target.id==='ov') closeModal(); }); }
 /* ============ Lijfrente (box 1): apart van je vermogen, uitkering als inkomen ============ */
@@ -1980,7 +2139,7 @@ function vMaand(){
   const ym=selYm||curYm(), mo=monthOverview(ym), past=ym<curYm(), st=monthStatus(ym);
   const acts=S.actuals.filter(a=>a.date.slice(0,7)===ym).sort((a,b)=>a.kind===b.kind?(a.date<b.date?-1:1):a.kind==='in'?-1:1);
   const exps=S.expected.filter(e=>e.ym===ym);
-  return `<div class="row"><div><h1>Maand</h1><p class="sub">Verwachte en werkelijke bedragen staan naast elkaar en worden nooit bij elkaar opgeteld.</p></div></div>${demoBanner()}
+  return `<div class="row"><div><h1>Maandoverzicht</h1><p class="sub">Verwachte en werkelijke bedragen staan naast elkaar en worden nooit bij elkaar opgeteld.</p></div></div>${demoBanner()}
   <div class="card"><div class="row">${monthPicker(ym,'mYm',k=>S.actuals.some(a=>a.date.slice(0,7)===k))}</div><div class="row" style="margin-top:12px"><button class="btn sec sm" data-a="mPrev" title="Vorige maand">‹</button><b style="text-transform:capitalize;font-size:17px">${mLong(ym)}</b><button class="btn sec sm" data-a="mNext" title="Volgende maand">›</button>${ym===curYm()?'<span class="badge">huidige maand</span>':''}<span class="spacer"></span>
     <button class="btn sm" data-a="addAct" data-k="uit">+ Werkelijke uitgave</button><button class="btn sm" data-a="addAct" data-k="in">+ Werkelijke inkomst</button><button class="btn sec sm" data-a="addExp">+ Verwachting</button></div>
     <div class="grid g3" style="margin-top:14px">
@@ -2100,8 +2259,8 @@ function vInvoer(){
     ? 'Vul je subcategorieën in, dan rekent de app het totaal van de categorie zelf uit. Vul je alleen het totaal in, dan is dat ook goed. Maandtotalen worden nooit automatisch een investering. Een investering voeg je hieronder apart toe.'
     : mode==='act'
       ? 'Vul de netto-inkomsten in die je deze maand echt hebt ontvangen: per categorie het totaal, of per persoon. De kolom "Verwacht" toont ter vergelijking wat er verwacht werd.'
-      : `Vul de verwachte netto-inkomsten in, per categorie of per persoon. Bedragen gelden als euro's van nu; in de 30-jaarsprognose komt de inkomensgroei erbij. Leeg maken = terug naar wat bij Vaste posten staat.`;
-  return `<div class="row"><div><h1>Invoeren</h1><p class="sub">Per maand je werkelijke bedragen, en voor inkomsten ook je verwachtingen voor de komende 30 jaar. Alles wordt meteen opgeslagen.</p></div><span class="spacer"></span>
+      : `Vul de verwachte netto-inkomsten in, per categorie of per persoon. Bedragen gelden als euro's van nu; in de planning per jaar komt de inkomensgroei erbij. Leeg maken = terug naar wat bij Vast en terugkerend staat.`;
+  return `<div class="row"><div><h1>Invoeren per maand</h1><p class="sub">Verleden: wat er werkelijk binnenkwam en uitging. Toekomst: verwachte inkomsten. Alles wordt meteen opgeslagen.</p></div><span class="spacer"></span>
     <div class="toggle" style="margin-right:8px"><button data-a="invView" data-v="maand" class="${invView==='maand'?'on':''}">Per maand</button><button data-a="invView" data-v="jaar" class="${invView==='jaar'?'on':''}">Jaaroverzicht</button></div><div class="toggle"><button data-a="invKind" data-v="uit" class="${kind==='uit'?'on':''}">Uitgaven</button><button data-a="invKind" data-v="in" class="${kind==='in'?'on':''}">Inkomsten</button></div></div>${demoBanner()}
   <div class="card">${monthPicker(ym,'gYm',k=>S.actuals.some(a=>isAct(a)&&a.date.slice(0,7)===k))}<div class="small muted" style="margin-top:6px">Klik op een maand. Donkerblauw = werkelijke ${kind==='uit'?'uitgaven':'inkomsten'} al ingevuld. Wissel van jaar met ‹ › of de keuzelijst. Sneltoetsen: <b>Page Up</b> / <b>Page Down</b> voor de vorige of volgende maand.</div>
   <div class="row" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px"><button class="btn sec sm" data-a="gPrev" title="Vorige maand">‹</button><b style="text-transform:capitalize;font-size:17px">${mLong(ym)}</b><button class="btn sec sm" data-a="gNext" title="Volgende maand">›</button>
@@ -2365,17 +2524,17 @@ function looseModal(kind,ym,cat){
   $('#ov').addEventListener('mousedown',e=>{ if(e.target.id==='ov'){ closeModal(); keepScroll(); } });
 }
 function vVast(){
-  const row=r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.cat)}</td><td>${esc(r.person||'Samen')}</td><td class="n">${E2(r.amount)}</td><td>${FREQ[r.freq]}</td><td>${mName(r.start)}</td><td>${r.end?mName(r.end):'<span class="muted">doorlopend</span>'}</td><td>${esc(r.day||'')}</td><td class="n"><button class="btn ghost sm" data-a="editRec" data-id="${r.id}">Bewerk</button><button class="btn ghost sm" data-a="delRec" data-id="${r.id}">✕</button></td></tr>`;
+  const row=r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.cat)}</td><td>${esc(r.person||'Samen')}</td><td class="n">${E2(r.amount)}</td><td>${FREQ[r.freq]}</td><td>${mName(r.start)}</td><td>${r.end?mName(r.end):'<span class="muted">doorlopend</span>'}</td><td>${esc(r.day||'')}</td><td class="n" style="white-space:nowrap">${attBtn(r)}<button class="btn ghost sm" data-a="editRec" data-id="${r.id}">Bewerk</button><button class="btn ghost sm" data-a="delRec" data-id="${r.id}">✕</button></td></tr>`;
   const tbl=k=>{ const rs=S.recurring.filter(r=>r.kind===k).sort((a,b)=>a.cat.localeCompare(b.cat)||(a.start<b.start?-1:1)); return rs.length?`<div class="tablewrap"><table><tr><th>Omschrijving</th><th>Categorie</th><th>Persoon</th><th class="n">Bedrag</th><th>Frequentie</th><th>Vanaf</th><th>Tot en met</th><th>Dag</th><th></th></tr>${rs.map(row).join('')}</table></div>`:'<p class="muted">Nog niets vastgelegd.</p>'; };
   const ev=calendarEvents();
-  return `<h1>Vaste posten</h1><p class="sub">Vaste lasten die elke maand, elk kwartaal of elk jaar terugkomen.</p>${demoBanner()}
+  return `<h1>Vast en terugkerend</h1><p class="sub">Vaste lasten die elke maand, elk kwartaal of elk jaar terugkomen.</p>${demoBanner()}
 
   <div class="card"><div class="row"><h2 style="margin:0">Vaste inkomsten</h2><span class="spacer"></span><button class="btn sm" data-a="addRec" data-k="in">+ Vaste inkomst</button></div><div style="margin-top:10px">${tbl('in')}</div></div>
   <div class="card"><div class="row"><h2 style="margin:0">Vaste lasten</h2><span class="spacer"></span><button class="btn sm" data-a="addRec" data-k="uit">+ Vaste last</button></div><div style="margin-top:10px">${tbl('uit')}</div></div>
   <div class="card"><h2>Kalender: wijzigingen en aflopende verplichtingen (komende 12 maanden)</h2><div class="cal">${ev.length?ev.map(e=>`<div class="ev"><div class="dt">${e.yearOnly?e.ym.slice(0,4):mName(e.ym)}</div><div style="flex:1">${esc(e.txt)} <span class="badge ${e.badge==='loopt af'?'w':''}">${esc(e.badge)}</span></div><div class="n ${e.kind==='in'?'pos':''}">${E2(e.amt)}</div></div>`).join(''):'<p class="muted">Geen wijzigingen in de komende 12 maanden.</p>'}</div></div>`;
 }
 /* ============ Bijlagen bij investeringen en grote uitgaven ============ */
-const ATT_KINDS=['Offerte','Factuur','Garantie','Bon','Contract','Bevestiging','Jaaroverzicht','Afschrift','Overig'], ATT_MAX=15*1024*1024;
+const ATT_KINDS=['Offerte','Factuur','Garantie','Bon','Contract','Bevestiging','Jaaroverzicht','Afschrift','Loonstrook','Jaaropgave','Pensioenoverzicht','Overig'], ATT_MAX=15*1024*1024;
 let attBusy=0;
 const fmtSize=n=>n>=1048576?numIn(Math.round(n/104857.6)/10)+' MB':Math.max(1,Math.round(n/1024))+' kB';
 function loadImg(file){ return new Promise((res,rej)=>{ const u=URL.createObjectURL(file), im=new Image(); im.onload=()=>{ res(im); setTimeout(()=>URL.revokeObjectURL(u),1000); }; im.onerror=()=>{ URL.revokeObjectURL(u); rej(new Error('img')); }; im.src=u; }); }
@@ -2390,10 +2549,10 @@ async function attPrepare(file){
   }
   if(!bytes) bytes=new Uint8Array(await file.arrayBuffer());
   if(bytes.length>ATT_MAX) throw new Error(`${name} is te groot (${fmtSize(bytes.length)}; maximaal 15 MB)`);
-  const kind=/factuur|invoice|nota/i.test(name)?'Factuur':/offerte|quote/i.test(name)?'Offerte':/garantie/i.test(name)?'Garantie':/contract|overeenkomst|voorwaarden/i.test(name)?'Contract':/bevestig/i.test(name)?'Bevestiging':/jaaroverzicht|jaaropgave/i.test(name)?'Jaaroverzicht':/afschrift/i.test(name)?'Afschrift':/bon|kassa|receipt/i.test(name)?'Bon':'Overig';
+  const kind=/factuur|invoice|nota/i.test(name)?'Factuur':/offerte|quote/i.test(name)?'Offerte':/garantie/i.test(name)?'Garantie':/contract|overeenkomst|voorwaarden/i.test(name)?'Contract':/bevestig/i.test(name)?'Bevestiging':/jaaropgave/i.test(name)?'Jaaropgave':/loonstrook|salaris/i.test(name)?'Loonstrook':/pensioen|uitkering|aow/i.test(name)?'Pensioenoverzicht':/jaaroverzicht/i.test(name)?'Jaaroverzicht':/afschrift/i.test(name)?'Afschrift':/bon|kassa|receipt/i.test(name)?'Bon':'Overig';
   return {bytes, meta:{id:uid()+uid(), name, type, size:bytes.length, kind, date:todayStr(), thumb}};
 }
-const attOwner=id=>S.actuals.find(x=>x.id===id)||S.expected.find(x=>x.id===id)||S.accounts.find(x=>x.id===id);
+const attOwner=id=>S.actuals.find(x=>x.id===id)||S.expected.find(x=>x.id===id)||S.recurring.find(x=>x.id===id)||S.accounts.find(x=>x.id===id);
 function attBtn(a){ const n=(a.att||[]).length; return `<button class="btn ghost sm" data-a="att" data-id="${a.id}" title="Bijlagen: offerte, factuur, enz.">📎${n?' '+n:''}</button>`; }
 function attModal(id){
   const a=attOwner(id); if(!a) return; a.att ||= [];
@@ -2404,8 +2563,8 @@ function attModal(id){
     <select class="attkind" data-mid="${m.id}" style="width:auto">${ATT_KINDS.map(k=>`<option ${k===m.kind?'selected':''}>${k}</option>`).join('')}</select>
     <button class="btn ghost sm attview" data-mid="${m.id}">Bekijk</button><button class="btn ghost sm attdel" data-mid="${m.id}" title="Verwijderen">✕</button></div>`).join(''):'<p class="muted">Nog geen bijlagen.</p>';
   const isAcc=!!(a.type&&TYPES[a.type]&&!a.kind), curV=isAcc?currentOf(a.id):null;
-  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal" style="max-width:640px"><h3>Bijlagen – ${esc(isAcc?a.name:(a.note||a.cat||''))}</h3>
-  <p class="small muted">${isAcc?`${esc(TYPES[a.type].label)}${curV?' · '+E2(curV.value)+' ('+dNl(curV.date)+')':''}. Foto's en documenten zoals contracten, bevestigingen, jaaroverzichten en afschriften.`:`${E2(a.amount)} · ${a.date?dNl(a.date):mLong(a.ym)}. Foto's en pdf's van offertes, facturen, garantiebewijzen en bonnen.`} Ze worden versleuteld opgeslagen, net als je andere gegevens; foto's worden automatisch verkleind.</p>
+  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal" style="max-width:640px"><h3>Bijlagen – ${esc(isAcc?a.name:(a.note||a.name||a.cat||''))}</h3>
+  <p class="small muted">${isAcc?`${esc(TYPES[a.type].label)}${curV?' · '+E2(curV.value)+' ('+dNl(curV.date)+')':''}. Foto's en documenten zoals contracten, bevestigingen, jaaroverzichten en afschriften.`:(a.kind==='in'?`${E2(a.amount)}${a.start?' · vanaf '+mLong(a.start):a.date?' · '+dNl(a.date):''}. Documenten zoals loonstroken, jaaropgaven, pensioenoverzichten en toekenningsbrieven.`:`${E2(a.amount)} · ${a.date?dNl(a.date):a.ym?mLong(a.ym):a.start?'vanaf '+mLong(a.start):''}. Foto's en pdf's van offertes, facturen, garantiebewijzen en bonnen.`)} Ze worden versleuteld opgeslagen, net als je andere gegevens; foto's worden automatisch verkleind.</p>
   <div id="attList">${list}</div>
   <div id="attProg" class="small" style="margin-top:8px"></div>
   <div class="actions"><label class="btn" style="cursor:pointer">+ Bijlagen toevoegen<input type="file" id="attFile" multiple accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.odt,.ods,.txt,.csv" style="display:none"></label><span class="spacer"></span><button class="btn sec" id="attClose">Sluiten</button></div>
@@ -2432,17 +2591,22 @@ async function attView(a,mid){
   }catch(e){ pv.innerHTML=`<p class="small" style="color:var(--neg);margin-top:12px">Bijlage ophalen lukt niet${e&&e.message?': '+esc(typeof errTxt==='function'?errTxt(e):e.message):''}.</p>`; }
 }
 function attDelAll(a){ for(const m of (a&&a.att)||[]) attDel(m.id).catch(()=>{}); }
-function vInvesteringen(){
-  const inv=S.actuals.filter(isInv).sort((a,b)=>a.date<b.date?1:-1), c=ymI(curYm());
-  const rows=inv.map(a=>{ const s=ymI(a.date.slice(0,7)), n=+a.months, done=Math.min(n,Math.max(0,c-s+1)), per=a.amount/n;
-    return `<tr><td>${esc(a.note||'')}<div class="small muted">${esc(a.cat)}</div></td><td>${dNl(a.date)}</td><td class="n">${E2(a.amount)}</td><td class="n">${n} mnd</td><td class="n">${E2(per)}</td><td class="n">${E(per*done)}</td><td class="n">${E(a.amount-per*done)}</td><td>${done>=n?'<span class="badge g">afgeschreven</span>':done===0?'<span class="badge">start later</span>':`<span class="badge">${done}/${n}</span>`}</td><td class="n" style="white-space:nowrap">${attBtn(a)}<button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button></td></tr>`; }).join('');
-  const thisM=sum(inv.map(a=>deprIn(a,curYm())));
-  return `<div class="row"><div><h1>Investeringen en afschrijving</h1><p class="sub">Uitgaven boven <b>${E(S.settings.threshold)}</b> (grensbedrag, instelbaar) worden investeringen${S.settings.noInvCats.length?`, behalve in ${S.settings.noInvCats.map(esc).join(', ')}`:''}. Afschrijving deze maand: <b>${E2(thisM)}</b>.</p></div><span class="spacer"></span><button class="btn" data-a="addAct" data-k="uit">+ Investering / uitgave</button></div>${demoBanner()}
-
-  <div class="card"><h2>Alle investeringen</h2>${inv.length?`<div class="tablewrap"><table><tr><th>Omschrijving</th><th>Betaald op</th><th class="n">Bedrag</th><th class="n">Termijn</th><th class="n">Per maand</th><th class="n">Afgeschreven</th><th class="n">Resterend</th><th>Status</th><th></th></tr>${rows}</table></div>`:'<p class="muted">Nog geen investeringen.</p>'}</div>`;
-}
-
 const rendSure = a => a.type==='deposito' && hasRate(a);
+function vInvesteringen(){
+  const today=todayStr(), c=ymI(curYm());
+  const inv=S.actuals.filter(a=>isInv(a)&&a.date<=today).sort((a,b)=>a.date<b.date?1:-1);
+  const fut=[...S.actuals.filter(a=>a.kind==='uit'&&!a.grid&&a.monthTotal==null&&a.date>today).map(a=>({t:'act',x:a,d:a.date})),
+             ...S.expected.filter(e=>e.kind==='uit'&&e.ym>=curYm()).map(e=>({t:'exp',x:e,d:lastDay(e.ym)}))].sort((p,q)=>p.d<q.d?-1:1);
+  const rows=inv.map(a=>{ const s=ymI(a.date.slice(0,7)), n=+a.months||1, done=Math.min(n,Math.max(0,c-s+1)), per=a.amount/n;
+    return `<tr><td>${esc(a.note||'')}<div class="small muted">${esc(a.cat)}${a.sub?' › '+esc(a.sub):''}</div></td><td>${dNl(a.date)}</td><td class="n">${E2(a.amount)}</td><td class="n">${n} mnd</td><td class="n">${E2(per)}</td><td class="n">${E(per*done)}</td><td class="n">${E(a.amount-per*done)}</td><td>${done>=n?'<span class="badge g">afgeschreven</span>':done===0?'<span class="badge">start later</span>':`<span class="badge">${done}/${n}</span>`}</td><td class="n" style="white-space:nowrap">${attBtn(a)}<button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Bewerk</button></td></tr>`; }).join('');
+  const frows=fut.map(({t,x,d})=>{ const how=t==='exp'?'<span class="badge">in één keer</span>':isInv(x)?`<span class="badge d">afschrijven ${x.months||1} mnd</span>`:'<span class="badge">in één keer</span>';
+    return `<tr><td>${esc(x.note||x.cat)}<div class="small muted">${esc(x.cat)}${x.sub?' › '+esc(x.sub):''}${x.rep&&x.repYears?` · elke ${x.repYears} jaar`:''}</div></td><td>${t==='exp'?mLong(x.ym):dNl(x.date)}</td><td class="n">${E2(x.amount)}</td><td>${how}</td><td class="n" style="white-space:nowrap">${attBtn(x)}<button class="btn ghost sm" data-a="${t==='exp'?'editExp':'editAct'}" data-id="${x.id}">Bewerk</button><button class="btn ghost sm" data-a="${t==='exp'?'delExp':'delAct'}" data-id="${x.id}" title="Verwijderen">✕</button></td></tr>`; }).join('');
+  const thisM=sum(S.actuals.map(a=>deprIn(a,curYm())));
+  return `<div class="row"><div><h1>Grote uitgaven</h1><p class="sub">Aankopen en grote kosten, voor het verleden en de toekomst. Per uitgave kies je of hij in één keer meetelt of over een aantal maanden wordt verdeeld (afschrijven). Afschrijving deze maand: <b>${E2(thisM)}</b>.</p></div><span class="spacer"></span><button class="btn" data-a="addAct" data-k="uit">+ Grote uitgave</button></div>${demoBanner()}
+  <div class="card"><h2>Toekomstige grote uitgaven</h2>${fut.length?`<div class="tablewrap"><table><tr><th>Omschrijving</th><th>Datum</th><th class="n">Bedrag</th><th>Telt mee</th><th></th></tr>${frows}</table></div>`:'<p class="muted">Nog geen toekomstige grote uitgaven. Klik op "+ Grote uitgave" en kies een datum in de toekomst.</p>'}</div>
+  <div class="card"><h2>Alle investeringen</h2>${inv.length?`<div class="tablewrap"><table><tr><th>Omschrijving</th><th>Betaald op</th><th class="n">Bedrag</th><th class="n">Termijn</th><th class="n">Per maand</th><th class="n">Afgeschreven</th><th class="n">Resterend</th><th>Status</th><th></th></tr>${rows}</table></div>`:'<p class="muted">Nog geen investeringen.</p>'}
+  <p class="small muted" style="margin-top:8px">Een uitgave boven ${E(S.settings.threshold)} stelt de app voor om af te schrijven (grensbedrag bij Instellingen). Bij Bewerken kies je zelf de termijn, of 1 maand voor in één keer.</p></div>`;
+}
 function expRendCard(){
   // 2026 tijdelijk overslaan: de saldi per 1 januari 2026 zijn niet volledig ingevuld. Vanaf 2027 begint het overzicht weer bij het lopende jaar.
   const cy=curY(), N=3, firstY=cy===2026?2027:cy, c=ymI(curYm()), months=ymI((firstY+N-1)+'-12')-c, sim=expReturnSim(Math.max(1,months));
@@ -2527,8 +2691,8 @@ function expRendCard(){
     ${scRow(`Voorzichtig (beleggingen ${scLow}%)`,key.map((v,i)=>v-tot[i]+scen.low[i]),`Goud, aandelen en crypto leveren ${scLow}% per jaar op. Rente op sparen en deposito's blijft gelijk.`)}
     ${scRow('Neutraal (je eigen verwachting)',key,'Het verwachte rendement dat je per rekening hebt ingesteld.')}
     ${scRow(`Gunstig (verwachting +${scHigh}%-punt)`,key.map((v,i)=>v-tot[i]+scen.high[i]),`Goud, aandelen en crypto leveren ${scHigh} procentpunt meer op dan je verwachting.`)}`:''}
-    <tr class="muted" title="Gemiddeld vermogen per maand in dat jaar (uit Komende maanden). Basis voor de percentages bij de totalen."><td class="small">Gemiddeld vermogen (basis %)</td>${vermAvg.map(v=>A(v!=null?E(v):'–','small')+X()).join('')}</tr>
-    <tr class="muted" title="Dit jaar: werkelijk. Later: verwacht, uit Komende maanden."><td class="small">Vermogen op 1 januari</td>${vermStart.map((v,i)=>A(v!=null?E(v):'–','small')+X(`<span class="small">${yrs[i]===cy?'werkelijk':'verwacht'}</span>`)).join('')}</tr>
+    <tr class="muted" title="Gemiddeld vermogen per maand in dat jaar (uit Planning per maand). Basis voor de percentages bij de totalen."><td class="small">Gemiddeld vermogen (basis %)</td>${vermAvg.map(v=>A(v!=null?E(v):'–','small')+X()).join('')}</tr>
+    <tr class="muted" title="Dit jaar: werkelijk. Later: verwacht, uit Planning per maand."><td class="small">Vermogen op 1 januari</td>${vermStart.map((v,i)=>A(v!=null?E(v):'–','small')+X(`<span class="small">${yrs[i]===cy?'werkelijk':'verwacht'}</span>`)).join('')}</tr>
     </table></div>
 </div>`;
 }
@@ -2654,7 +2818,7 @@ function vPrognose(){
   const incChart=stackChart({labels,series:incSeries,h:300,step:500}).replace(/<div class="legend">[\s\S]*<\/div>$/,'')+`<div class="legend lgroups">${legendGroups.join('')}</div>`;
   const people=[...new Set(pr.rows.flatMap(r=>Object.keys(r.incByPerson)))];
   const low=pr.rows.find(r=>r.end<0);
-  return `<div class="row"><div><h1>Langetermijnplanning: 30 jaar</h1><p class="sub">Een berekening op basis van jullie eigen invoer. Geen garantie en geen beleggingsadvies.</p></div><span class="spacer"></span><div class="toggle"><button data-a="real" data-v="0" class="${real?'':'on'}">Nominale euro's</button><button data-a="real" data-v="1" class="${real?'on':''}">Euro's van nu</button></div></div>${demoBanner()}
+  return `<div class="row"><div><h1>Planning per jaar (30 jaar)</h1><p class="sub">Een berekening op basis van jullie eigen invoer. Geen garantie en geen beleggingsadvies.</p></div><span class="spacer"></span><div class="toggle"><button data-a="real" data-v="0" class="${real?'':'on'}">Nominale euro's</button><button data-a="real" data-v="1" class="${real?'on':''}">Euro's van nu</button></div></div>${demoBanner()}
   <p class="small muted" style="margin:-6px 0 12px">Start: verwacht vermogen op 1 januari ${curY()+1} ${E(pr.rest.end)}${pr.start.missing.length?' (<b>onvolledig</b>)':''} · uitgaven ${E(pr.baseM)} per maand ${pr.base.source==='werkelijk'?`(gemiddelde van ${pr.base.n} maanden)`:'(verwachte vaste lasten)'} · rendement ${numIn(S.settings.rend)}%${S.settings.box3?' min '+numIn(S.settings.box3)+'% box 3':''}. Klik op <b>?</b> bij de titel voor de uitleg.</p>
   ${low?`<div class="warn">Volgens deze berekening wordt het vermogen in <b>${low.y}</b> negatief.</div>`:''}
   <div class="card"><h2>Verwacht vermogen${real?' (euro\'s van nu)':''}</h2>${comboChart({labels:['Nu',...labels],line:{name:'Vermogen eind van het jaar',values:[pr.start.total,...pr.rows.map(r=>R(r.end,r))],color:'#1d5fbf'},bars:[{name:'Inkomsten per jaar',values:[0,...pr.rows.map(r=>R(r.inc,r))],color:'#93b8ea'},{name:'Uitgaven per jaar',values:[0,...pr.rows.map(r=>R(r.exp,r))],color:'#e89a6a'}]})}<p class="small muted" style="margin-top:6px">Het eerste punt is het vermogen van nu. Elk volgend punt is het vermogen aan het eind van dat jaar: vermogen aan het begin + rendement + inkomsten − uitgaven. Daalt het vermogen in een jaar niet terwijl je meer uitgeeft dan je verdient, dan maakt het rendement het verschil goed.</p></div>
@@ -2671,7 +2835,7 @@ function vPrognose(){
       ${(()=>{ const fut=S.actuals.filter(a=>a.kind==='uit'&&!a.grid&&a.monthTotal==null&&a.date>todayStr()).sort((a,b)=>a.date<b.date?-1:1);
         return fut.length?`<table style="margin-top:10px"><tr><th>Datum</th><th>Omschrijving</th><th class="n">Bedrag</th><th></th></tr>${fut.map(a=>`<tr><td>${dNl(a.date)}</td><td>${esc(a.note||a.cat)}${a.rep&&a.repYears?` <span class="badge" title="Terugkerende investering">elke ${a.repYears} jaar</span>`:''}</td><td class="n">${E(a.amount)}</td><td class="n" style="white-space:nowrap">${attBtn(a)}<button class="btn ghost sm" data-a="editAct" data-id="${a.id}">Wijzig</button><button class="btn ghost sm" data-a="delAct" data-id="${a.id}" title="Verwijderen">✕</button></td></tr>`).join('')}</table>`:'<p class="muted">Nog geen toekomstige aankopen.</p>'; })()}
       <p class="small muted" style="margin-top:8px">Toekomstige aankopen voer je hier in of bij <a href="#investeringen">Investeringen</a>, met de datum waarop je verwacht te betalen. Ze tellen in de prognose volledig mee in dat jaar. Wijzigen of verwijderen kan hier of daar.</p></div>
-    <div class="card"><h2>Inkomsten per persoon (eerste jaar, ${curY()+1})</h2>${pr.rows[0]?`<table>${people.map(p=>`<tr><td>${esc(p)}</td><td class="n">${E(R((pr.rows[0].incByPerson[p]||0)/12,pr.rows[0]))} p/m</td></tr>`).join('')||'<tr><td class="muted">Geen vaste inkomsten</td></tr>'}</table>`:''}<p class="small muted">Toekomstige inkomsten per persoon voer je in bij Invoeren → Inkomsten → Verwachting, of bij Vaste posten met een startmaand (bijv. pensioen of AOW).</p></div>
+    <div class="card"><h2>Inkomsten per persoon (eerste jaar, ${curY()+1})</h2>${pr.rows[0]?`<table>${people.map(p=>`<tr><td>${esc(p)}</td><td class="n">${E(R((pr.rows[0].incByPerson[p]||0)/12,pr.rows[0]))} p/m</td></tr>`).join('')||'<tr><td class="muted">Geen vaste inkomsten</td></tr>'}</table>`:''}<p class="small muted">Toekomstige inkomsten per persoon voer je in bij Invoeren → Inkomsten → Verwachting, of bij Vast en terugkerend met een startmaand (bijv. pensioen of AOW).</p></div>
   </div>
   <div class="card"><h2>Aannames per jaar en uitkomst</h2><p class="small muted">Pas de percentages per jaar aan. Een leeg vakje gebruikt de standaardwaarde (inflatie ${cpiOn()?'<b>jouw persoonlijke inflatie</b> (grijs per jaar; zie Analyse). Je hypotheek en andere vaste bedragen stijgen daarbij niet mee':numIn(S.settings.infl)+'% uit Instellingen'}, rendement ${numIn(S.settings.rend)}%, inkomensgroei ${numIn(S.settings.growth)}%).</p>
   <div class="tablewrap"><table><tr><th>Jaar</th><th class="n">Inflatie %</th><th class="n">Rendement %</th><th class="n">Inkomensgroei %</th><th class="n">Begin</th><th class="n">Inkomsten</th><th class="n">Uitgaven</th><th class="n">Rendement</th><th class="n">Eind</th></tr>
@@ -2743,7 +2907,9 @@ function vInstellingen(){
       <div class="f"><label>Grensbedrag investeringen (€)</label><input id="s_threshold" inputmode="decimal" value="${numIn(s.threshold)}"><div class="help">Uitgaven hóger dan dit bedrag worden een investering.</div></div>
       <div class="f"><label>Namen (gescheiden door komma)</label><input id="s_people" value="${esc(s.people.join(', '))}"></div>
       <div class="f"><label>Standaard inflatie per jaar (%)</label><input id="s_infl" inputmode="decimal" value="${numIn(s.infl)}"></div>
-      <div class="f"><label>Standaard vermogensrendement per jaar (%)</label><input id="s_rend" inputmode="decimal" value="${numIn(s.rend)}"></div>
+      <div class="f"><label>Uitgaven in de planning: gemiddelde van de laatste … maanden</label><input id="s_baseMonths" inputmode="numeric" value="${s.baseMonths||12}"><div class="help">Standaard 12. Geldt voor Planning per maand én per jaar. Investeringen tellen hier niet in mee.</div></div>
+      <div class="f"><label>Rendement per rekening voor de eerste … jaren</label><input id="s_rendYears" inputmode="numeric" value="${s.rendYears??3}"><div class="help">In deze jaren rekent de planning met de rente en het verwachte rendement per rekening (zoals bij Rendement). Daarna met het percentage hieronder. 0 = altijd het percentage.</div></div>
+      <div class="f"><label>Vermogensrendement per jaar daarna (%)</label><input id="s_rend" inputmode="decimal" value="${numIn(s.rend)}"></div>
       <div class="f"><label>Standaard inkomensgroei per jaar (%)</label><input id="s_growth" inputmode="decimal" value="${numIn(s.growth)}"></div>
       <div class="f"><label>Vermogensbelasting (box 3), % van het vermogen per jaar</label><input id="s_box3" inputmode="decimal" value="${numIn(s.box3)}"><div class="help">Standaard 0. Wordt in de prognose van het rendement afgetrokken. Bij Rendement zie je wat je werkelijk ongeveer betaalt.</div></div>
       <div class="f cb"><label><input type="checkbox" id="s_b3partner" ${(s.box3Partner??(s.people.length>=2))?'checked':''}> Fiscale partners (dubbel heffingsvrij vermogen in box 3)</label></div>
@@ -2765,7 +2931,7 @@ function vInstellingen(){
       <div class="f"><label>AOW-leeftijd voor jaren na ${AOW_FIXED_TO} (nog niet vastgesteld)</label><select id="aowLater">${[3,6,9,12,15,18].map(m=>`<option value="${m}" ${+S.settings.aowLater===m?'selected':''}>${ageTxt(804+m-0)}</option>`).join('')}</select>
         <div class="help">Tot en met ${AOW_FIXED_TO} is de AOW-leeftijd wettelijk vastgesteld op 67 jaar en 3 maanden. Daarna hangt hij af van de levensverwachting en kan hij alleen gelijk blijven of stijgen.</div></div>
       <div class="f"><label>Inkomen uit werk (stopt op de stopdatum)</label><div class="row" style="gap:6px 16px">${S.incCats.map(c=>`<label style="display:flex;gap:6px;align-items:center;font-weight:500"><input type="checkbox" class="workcat" value="${esc(c)}" ${(S.settings.workCats||[]).includes(c)?'checked':''}> ${esc(c)}</label>`).join('')}</div>
-        <div class="help">Vanaf de stopdatum telt de prognose deze inkomsten voor die persoon niet meer mee, ook als ze bij Vaste posten doorlopen. Stopt iemand halverwege een maand, dan telt die maand nog volledig mee.</div></div></div>
+        <div class="help">Vanaf de stopdatum telt de prognose deze inkomsten voor die persoon niet meer mee, ook als ze bij Vast en terugkerend doorlopen. Stopt iemand halverwege een maand, dan telt die maand nog volledig mee.</div></div></div>
     <div class="card"><h2>Hoe werken categorieën?</h2>
       <p class="small">Uitgaven delen je in <b>categorieën</b> in, met eventueel <b>subcategorieën</b> eronder. Bij Invoeren vul je per categorie het totaal in, of de subcategorieën afzonderlijk.</p>
       <p class="small">Een <b>naam wijzigen</b> doe je door in het vakje te typen. Bedragen die je al had ingevoerd verhuizen automatisch mee naar de nieuwe naam.</p>
@@ -2776,7 +2942,8 @@ function vInstellingen(){
   ${hgEditor()}
   <div class="card"><h2>Gegevens</h2>
     <p class="small muted">Je gegevens staan versleuteld in je privé GitHub-repository <b>${esc(CFG?CFG.owner+"/"+CFG.repo:"")}</b> en zijn zichtbaar op al je apparaten die je hebt gekoppeld. Status: <span id="syncDot" class="sync ${dbState}">${syncTxt()}</span></p>
-    <div class="row"><button class="btn sec" data-a="export">Back-up downloaden</button><button class="btn sec" data-a="copy">Back-up kopiëren</button><button class="btn sec" data-a="paste">Back-up plakken</button><button class="btn sec" data-a="unlink">Koppeling op dit apparaat verwijderen</button><label class="btn sec" style="cursor:pointer">Back-up terugzetten<input type="file" id="importFile" accept=".json,application/json" hidden></label><span class="spacer"></span>${S.demo?'<button class="btn danger" data-a="wipe">Voorbeeldgegevens wissen en leeg beginnen</button>':'<button class="btn sec" data-a="demo">Voorbeeldgegevens laden</button><button class="btn danger" data-a="wipe">Alles wissen</button>'}</div>
+    ${localFolderHtml()}
+    <div class="row" style="margin-top:10px"><button class="btn sec" data-a="export">Back-up downloaden</button><button class="btn sec" data-a="copy">Back-up kopiëren</button><button class="btn sec" data-a="paste">Back-up plakken</button><button class="btn sec" data-a="unlink">Koppeling op dit apparaat verwijderen</button><label class="btn sec" style="cursor:pointer">Back-up terugzetten<input type="file" id="importFile" accept=".json,application/json" hidden></label><span class="spacer"></span>${S.demo?'<button class="btn danger" data-a="wipe">Voorbeeldgegevens wissen en leeg beginnen</button>':'<button class="btn sec" data-a="demo">Voorbeeldgegevens laden</button><button class="btn danger" data-a="wipe">Alles wissen</button>'}</div>
   </div>`;
 }
 
@@ -2793,43 +2960,68 @@ const HELP={
   <p><b>Goud:</b> gewicht in gram × goudprijs per gram × percentage. <i>Voorbeeld:</i> 62,2 g × €112,50 × 95% = €6.647.</p>
   <p><b>Aankoop / verkoop:</b> het saldo wordt direct bijgewerkt met het bedrag (uit te zetten). Bij "Alles verkocht" wordt het saldo € 0.</p><p><b>Sluiten</b> bewaart de geschiedenis: tot de sluitdatum telt de rekening mee in je vermogen, rendement en box 3; je vindt haar onder Gesloten rekeningen. <b>Verwijderen</b> haalt alles weg, ook uit het verleden. Per ongeluk verwijderd? Onderaan de pagina kun je een rekening terughalen uit een oudere versie (GitHub bewaart elke versie).</p>
   <p><b>Lijfrente / aanvullend pensioen:</b> een geblokkeerde rekening in box 1. Telt niet mee in je vermogen en niet in box 3. De app berekent het bedrag op de startdatum, de uitkering per maand (bruto en geschat netto) en zet die als inkomen "Lijfrente" in je planning.</p>`],
- kort:['Komende maanden',`<p>Je vermogen per maand. Grijze kolommen zijn <b>werkelijk</b> (uit Invoeren en je saldi), witte kolommen zijn de <b>verwachting</b>. Scroll de tabel onbeperkt naar links of rechts.</p>
-  <p><b>Per maand:</b> vermogen begin + inkomsten + incidentele inkomsten − uitgaven − incidentele uitgaven − investeringen ± rendement = vermogen eind.</p>
-  <ul><li><b>Inkomsten:</b> volgens Inkomen plannen (of het gemiddelde van de laatste 12 maanden, met de knop).</li>
-  <li><b>Uitgaven:</b> gemiddelde van je werkelijke uitgaven over de laatste 12 maanden, zonder investeringen en zonder afschrijving.</li>
-  <li><b>Incidenteel:</b> eenmalige bedragen bij Inkomen plannen, verwachtingen bij Invoeren, en losse uitgaven met een datum in de toekomst.</li>
-  <li><b>Investeringen:</b> volledig in de maand van betaling.</li>
-  <li><b>Rendement:</b> per rekening (zie Rendement). Bij werkelijke maanden het verschil tussen je saldi en de ingevoerde bedragen.</li>
-  <li><b>Vrij opneembaar:</b> rekeningen met "direct beschikbaar", plus deposito's op hun einddatum en deposito-rente op de uitkeringsdatum.</li></ul>
+ kort:['Planning – per maand',`<p>Je vermogen per maand, vanaf vandaag zo ver vooruit als je wilt. Grijze kolommen zijn <b>werkelijk</b> (saldi en Invoeren), witte kolommen zijn <b>verwachting</b>. Per maand en per jaar rekenen met <b>precies dezelfde methode</b>: twaalf maanden hier opgeteld = één jaar bij Per jaar.</p>
+  <p><b>Per maand:</b> vermogen begin + inkomsten − uitgaven − grote uitgaven ± rendement = vermogen eind.</p>
+  <p class="ugp"><b>Uitgangspunten</b></p><ul>
+  <li><b>Inkomsten:</b> wat bij Planning → Inkomen staat (salaris tot de stopdatum, pensioen en AOW vanaf de ingangsdatum). Vanaf volgend jaar komt de <b>inkomensgroei</b> uit Instellingen erbij. Lijfrente groeit niet mee (vast bedrag). Met de knop kun je ook rekenen met het gemiddelde van je werkelijke inkomsten.</li>
+  <li><b>Uitgaven:</b> het gemiddelde van je werkelijke uitgaven over de laatste <b>{BN} maanden</b> (instelbaar bij Instellingen), zonder grote uitgaven en afschrijving.</li>
+  <li><b>Inflatie:</b> dit jaar geen; vanaf 1 januari volgend jaar stijgen de uitgaven elk jaar met de inflatie (Instellingen, of je persoonlijke inflatie als die aan staat). Je hypotheek stijgt niet mee.</li>
+  <li><b>Vaste lasten die veranderen</b> (Invoeren → Vast en terugkerend): alleen het verschil met nu telt, vanaf de maand van de wijziging. Stopt een lening van €300, dan dalen je uitgaven vanaf die maand met €300.</li>
+  <li><b>Grote uitgaven:</b> tellen volledig mee in de maand van betaling (niet afgeschreven), want dan gaat het geld van je rekening.</li>
+  <li><b>Rendement:</b> de eerste <b>{RY} jaar</b> per rekening: spaarrente met rente op rente, deposito-rente op de uitkeringsdatum, en het verwachte rendement per belegging. Daarna het percentage uit Instellingen over het hele vermogen. Box 3-belasting gaat er in januari af.</li>
+  <li><b>Werkelijke maanden:</b> het rendement is het verschil tussen je saldi en de ingevoerde bedragen.</li></ul>
   <p><i>Voorbeeld:</i> begin €76.000 + €5.500 inkomsten − €3.700 uitgaven − €6.000 warmtepomp + €90 rente = eind €71.890.</p>`],
- vrij:['Vrij geld',`<p>Hoeveel geld je op elk moment vrij kunt opnemen, zodat je bijvoorbeeld een auto kunt plannen op een moment dat er genoeg vrij is.</p>
-  <p><b>Per maand:</b> vrij tegoed begin + inkomsten − gemiddelde uitgaven − inleg op vastgezette rekeningen + deposito's die vrijkomen + deposito-rente − aankopen = eind.</p>
-  <p>Met het vinkje <b>Inkomsten en uitgaven meetellen</b> uit zie je alleen wat de deposito's en geplande aankopen doen.</p>
-  <p><i>Voorbeeld:</i> nu €44.000 vrij; in april komt een deposito van €50.000 vrij (+ €1.225 rente) → €95.225; in juni een auto van €35.000 → €60.225.</p>
-  <p>Na de einddatum van een deposito: zet het geld in de app over naar je spaar- of betaalrekening (nieuw saldo invoeren) en zet de deposito op nul.</p>`],
- inkomen:['Inkomen plannen',`<p>Eén plek voor al je toekomstige netto inkomsten. Vul per persoon elk inkomen in met het bedrag per maand, <b>vanaf</b> en <b>tot en met</b> wanneer.</p>
-  <ul><li>Salaris tot en met de maand dat iemand stopt met werken.</li><li>Pensioen en AOW vanaf de maand dat ze ingaan.</li><li><b>Eenmalig bedrag:</b> telt alleen in die ene maand (kies als soort "Overig").</li></ul>
-  <p>Dit telt mee in Maand, Komende maanden, Vrij geld en 30 jaar. Bedragen zijn in euro's van nu; in de 30-jaarsplanning komt de inkomensgroei erbij.</p>
-  <p>Wat je <b>echt ontvangen</b> hebt, vul je in bij Invoeren (Werkelijk). Staan er bij Invoeren nog verwachtingen voor de toekomst, dan gaan die vóór; wis ze met de knop als je alles hier wilt regelen.</p>`],
- invoer:['Invoeren',`<p>Hier vul je je <b>werkelijke</b> inkomsten en uitgaven in, per maand of in het jaaroverzicht.</p>
-  <ul><li>Per categorie het totaal, of de subcategorieën afzonderlijk (dan berekent de app het totaal).</li><li>Uitgaven boven het grensbedrag (standaard €500) worden een <b>investering</b> en worden afgeschreven, tenzij de categorie op "nooit een investering" staat.</li>
-  <li>Het vinkje <b>Wijziging geldt ook voor alle maanden hierna</b> (bij Verwachting) overschrijft latere maanden; zet het uit als je één maand wilt aanpassen.</li></ul>`],
- maand:['Maand',`<p>Eén maand in detail: verwachte en werkelijke bedragen naast elkaar. Ze worden nooit bij elkaar opgeteld.</p><p>Verwacht komt uit Inkomen plannen, Vaste posten en verwachtingen; werkelijk uit Invoeren. Afschrijving van investeringen staat als aparte categorie.</p>`],
- analyse:['Analyse',`<p>Waar het geld naartoe gaat en waar het vandaan komt, op basis van je werkelijke bedragen.</p><p><b>Onderdelen:</b> kies bovenaan wat je wilt zien: per maand, per categorie, per jaar en verdeling, jaren vergelijken of je persoonlijke inflatie.</p><p><b>Hoofdgroepen of categorieën:</b> kies bovenaan het niveau. Hoofdgroepen bundelen je categorieën; klik op een hoofdgroep voor de categorieën erin. Je hoofdgroepen maak, hernoem en vul je zelf bij Instellingen → Hoofdgroepen. Klik op een <b>?</b> bij een tabel of grafiek voor korte uitleg.</p>
-  <ul><li><b>Per jaar:</b> klik op een staaf om dat jaar te kiezen.</li><li><b>Taartdiagram:</b> klik op een categorie voor de subcategorieën; bij Afschrijving zie je de investeringen.</li><li><b>Jaren vergelijken:</b> vink jaren aan om categorieën of subcategorieën naast elkaar te zetten.</li></ul>
-  <p>Het lopende jaar telt tot en met de huidige maand.</p>
-  <p><b>Jouw persoonlijke inflatie</b> (onderaan): de app haalt elke twee weken de prijsstijging per categorie op bij het CBS (jaarmutatie van de consumentenprijsindex). Per categorie: jouw aandeel in de uitgaven van de laatste 12 maanden × de prijsstijging = bijdrage. Alle bijdragen samen zijn jouw inflatie. <i>Voorbeeld:</i> boodschappen zijn 18% van je uitgaven en worden 3,4% duurder: 0,18 × 3,4 = 0,61 procentpunt.</p>
-  <ul><li><b>Categorieën koppelen:</b> de app stelt per categorie een CBS-categorie voor; je kunt dat aanpassen of een eigen percentage invullen.</li><li><b>Hypotheek:</b> telt niet mee (het CBS ziet een koopwoning als investering) en blijft in de 30-jaarsplanning gelijk.</li><li><b>Investeringen:</b> een auto telt mee met de afschrijving per maand (aanschaf van voertuigen); andere investeringen standaard niet.</li><li><b>Maandcijfer:</b> het CBS meet de inflatie per maand: de prijzen van die maand vergeleken met dezelfde maand een jaar eerder (oktober tegenover oktober). De app gebruikt het gemiddelde van de laatste 12 maandcijfers, net als het CBS voor een heel jaar.</li><li><b>Lange termijn (30 jaar):</b> de inflatie-aanname uit Instellingen plus jouw vaste afwijking van het landelijk gemiddelde (over 10 jaar, maximaal 1,5 procentpunt). Het eerste jaar ligt tussen je huidige inflatie en die waarde in.</li></ul>`],
- vast:['Vaste posten',`<p>Je vaste lasten zitten al in je werkelijke uitgaven, en daarmee in de planning (gemiddelde van de laatste 24 maanden). Je hoeft ze hier niet allemaal in te vullen.</p>
-  <p>Gebruik deze pagina voor vaste lasten die <b>in de toekomst stoppen, beginnen of veranderen</b>: een lening of lease met einddatum, een premie die op een leeftijd stopt, reiskosten die stoppen bij pensioen, een nieuwe verzekering.</p>
-  <p><b>Berekening:</b> de app kijkt alleen naar het <b>verschil met nu</b>. <i>Voorbeeld:</i> uitgaven €3.000 per maand inclusief €1.000 hypotheek die eind 2030 stopt → tot 2030 €3.000, vanaf 2031 €2.000 per maand (plus inflatie). Een vaste last die gewoon doorloopt verandert niets, dus er telt niets dubbel.</p>
-  <p>Inkomsten beheer je op Inkomen plannen; het is dezelfde lijst.</p>`],
- investeringen:['Investeringen',`<p>Grote aankopen boven het grensbedrag. De <b>betaling</b> zie je terug in je saldi; de <b>afschrijving</b> verdeelt de kosten over de maanden.</p>
-  <p><i>Voorbeeld:</i> een vloer van €15.000 over 15 jaar = €83 per maand afschrijving in het maandoverzicht en bij Analyse.</p>
-  <p><b>Toekomstige aankoop:</b> vul de datum en het verwachte bedrag in. In de 30-jaarsplanning, Komende maanden en Vrij geld telt die volledig mee in de maand van betaling (zonder afschrijving).</p>
-  <p><b>Herhalen:</b> bijvoorbeeld elke 8 jaar een auto, met een prijsstijging per jaar. Pas je een herhaling aan, dan worden de latere opnieuw berekend.</p>
-  <p><b>Bijlagen (📎):</b> voeg foto's of pdf's toe van offertes, facturen, garantiebewijzen en bonnen. Ze worden versleuteld opgeslagen in je privé-repository (map bijlagen), net als je andere gegevens. Foto's worden automatisch verkleind; maximaal 15 MB per bestand.</p>`],
- rendement:['Rendement',`<p><b>Verwacht rendement komende jaren</b>, per rekening:</p>
+ prognose:['Planning – per jaar (30 jaar)',`<p>Je vermogen per jaar, 30 jaar vooruit. Een berekening, geen garantie en geen beleggingsadvies.</p>
+  <p><b>Per jaar:</b> vermogen begin + rendement + inkomsten − uitgaven = vermogen eind.</p>
+  <p class="ugp"><b>Uitgangspunten</b></p><ul>
+  <li><b>Zelfde methode als Per maand:</b> elk jaar is de optelling van de twaalf maanden. De cijfers sluiten dus precies op elkaar aan.</li>
+  <li><b>Start:</b> je vermogen van vandaag, plus de verwachte rest van dit jaar.</li>
+  <li><b>Inkomsten:</b> Planning → Inkomen, met de inkomensgroei vanaf volgend jaar (lijfrente groeit niet mee).</li>
+  <li><b>Uitgaven:</b> gemiddelde van de laatste <b>{BN} maanden</b> werkelijke uitgaven, met inflatie vanaf volgend jaar, plus of min veranderende vaste lasten, plus grote uitgaven in het jaar van betaling. De hypotheek stijgt niet mee met de inflatie.</li>
+  <li><b>Rendement:</b> de eerste <b>{RY} jaar</b> per rekening (rente en verwacht rendement, zoals bij Rendement), daarna het percentage uit Instellingen over het vermogen aan het begin van het jaar. Box 3-belasting gaat eraf.</li>
+  <li><b>Persoonlijke inflatie:</b> staat het vinkje bij Analyse aan, dan stijgen je uitgaven met de inflatie-aanname plus jouw vaste afwijking van het landelijk gemiddelde. Het grijze percentage in de tabel is jouw verwachte inflatie voor dat jaar; een zelf ingevuld percentage geldt voor alles in dat jaar.</li>
+  <li><b>Euro's van nu:</b> rekent alles terug naar de waarde van vandaag. Inkomen dat minder groeit dan de inflatie daalt dan.</li></ul>
+  <p><i>Voorbeeld:</i> €300.000 begin + €12.000 rendement + €60.000 inkomsten − €70.000 uitgaven (incl. een auto) = €302.000.</p>`],
+ vrij:['Vrij geld',`<p>Hoeveel geld je op elk moment vrij kunt opnemen, zodat je een grote uitgave plant op een moment dat er genoeg vrij is.</p>
+  <p><b>Per maand:</b> vrij tegoed begin + inkomsten − uitgaven − inleg op vastgezette rekeningen + deposito's die vrijkomen + deposito-rente − grote uitgaven = eind.</p>
+  <p class="ugp"><b>Uitgangspunten</b></p><ul><li><b>Vrij</b> = rekeningen met het vinkje "direct beschikbaar". Deposito's tellen pas mee op hun einddatum.</li>
+  <li><b>Inkomsten en uitgaven:</b> dezelfde bedragen als bij Planning → Per maand (gemiddelde van {BN} maanden, inflatie vanaf volgend jaar, veranderende vaste lasten).</li>
+  <li>Met het vinkje <b>Inkomsten en uitgaven meetellen</b> uit zie je alleen wat de deposito's en grote uitgaven doen.</li></ul>
+  <p><i>Voorbeeld:</i> nu €44.000 vrij; in april komt €50.000 vrij (+ €1.225 rente) → €95.225; in juni een auto van €35.000 → €60.225.</p>`],
+ inkomen:['Inkomen',`<p>Eén plek voor al jullie toekomstige netto inkomsten: per persoon het bedrag per maand, <b>vanaf</b> en <b>tot en met</b> wanneer.</p>
+  <p class="ugp"><b>Uitgangspunten</b></p><ul><li>Bedragen zijn <b>netto en in euro's van nu</b>. De inkomensgroei uit Instellingen komt er in de planning vanaf volgend jaar bij.</li>
+  <li>Salaris loopt tot en met de stopdatum; pensioen en AOW vanaf de ingangsdatum (AOW-datum uit de geboortedatum).</li>
+  <li><b>Eenmalig bedrag</b> (soort "Overig"): telt alleen in die ene maand.</li>
+  <li><b>Lijfrente</b> komt automatisch uit de lijfrenterekening (netto, geschat) en groeit niet mee.</li>
+  <li>Wat je <b>echt ontvangen</b> hebt, vul je in bij Invoeren → Per maand. Een verwachting die je daar voor één toekomstige maand invult, gaat vóór wat hier staat.</li></ul>
+  <p>Telt mee in Planning (per maand, per jaar, vrij geld) en het Maandoverzicht.</p>`],
+ invoer:['Invoeren – per maand',`<p>Hier vul je per maand je inkomsten en uitgaven in. Kies een maand in het verleden of in de toekomst.</p>
+  <p class="ugp"><b>Uitgangspunten</b></p><ul><li><b>Verleden en deze maand:</b> wat je <b>werkelijk</b> hebt ontvangen en uitgegeven. Dit is de basis voor Analyse, je persoonlijke inflatie en het gemiddelde in de planning.</li>
+  <li><b>Toekomstige maanden, inkomsten:</b> staat automatisch op <b>Verwachting</b>. Een bedrag dat je hier invult, gaat in de planning vóór wat bij Inkomen staat. Met "Wijziging geldt ook voor alle maanden hierna" geldt het ook voor latere maanden.</li>
+  <li><b>Toekomstige uitgaven:</b> de planning rekent met je gemiddelde. Een losse grote uitgave in de toekomst zet je bij <b>Grote uitgaven</b>; een vaste last die verandert bij <b>Vast en terugkerend</b>.</li>
+  <li>Per categorie het totaal, of de subcategorieën (dan rekent de app het totaal uit).</li>
+  <li><b>Jaaroverzicht:</b> alle maanden van een jaar naast elkaar, handig om snel bij te werken.</li></ul>`],
+ vast:['Vast en terugkerend',`<p>Vaste lasten en inkomsten die elke maand, elk kwartaal of elk jaar terugkomen.</p>
+  <p class="ugp"><b>Uitgangspunten</b></p><ul><li>Je huidige vaste lasten zitten al in je werkelijke uitgaven, en dus in het gemiddelde van de planning. Je hoeft ze hier niet allemaal in te vullen.</li>
+  <li>Gebruik deze pagina voor vaste lasten die in de toekomst <b>stoppen, beginnen of veranderen</b>: een lening met einddatum, een premie die stopt, een nieuwe verzekering.</li>
+  <li>De app telt alleen het <b>verschil met nu</b>, vanaf de maand van de wijziging. Een vaste last die gewoon doorloopt verandert niets, dus er telt niets dubbel.</li>
+  <li>Vanaf volgend jaar stijgt het verschil mee met de inflatie (behalve de hypotheek).</li></ul>
+  <p><i>Voorbeeld:</i> uitgaven €3.000 per maand, inclusief €1.000 hypotheek die eind 2030 stopt → tot 2030 €3.000, vanaf 2031 €2.000 per maand (plus inflatie).</p>`],
+ investeringen:['Grote uitgaven',`<p>Aankopen en grote kosten, in het verleden en de toekomst, op één plek. Investeringen zijn ook grote uitgaven.</p>
+  <p class="ugp"><b>Uitgangspunten</b></p><ul><li><b>Planning en Vrij geld:</b> een grote uitgave telt volledig mee in de maand van betaling, want dan gaat het geld van je rekening.</li>
+  <li><b>Analyse en Maandoverzicht:</b> kies per uitgave <b>in één keer</b> (bijvoorbeeld een vakantie) of <b>afschrijven</b> over een aantal maanden (bijvoorbeeld een keuken over 120 maanden = 1/120 per maand). Zo vertekent één grote aankoop je maanduitgaven niet.</li>
+  <li>Grote uitgaven tellen <b>niet</b> mee in het gemiddelde van de planning; anders zouden ze dubbel tellen.</li>
+  <li><b>Herhalen:</b> bijvoorbeeld elke 8 jaar een auto, met een prijsstijging per jaar.</li>
+  <li><b>Bijlagen (📎):</b> foto's of pdf's van offertes, facturen en garantiebewijzen, versleuteld opgeslagen. Maximaal 15 MB per bestand.</li></ul>
+  <p><i>Voorbeeld:</i> een vloer van €15.000 over 15 jaar = €83 per maand in Analyse; in de planning de volle €15.000 in de maand van betaling.</p>`],
+ maand:['Maandoverzicht',`<p>Eén maand in detail: verwachte en werkelijke bedragen naast elkaar. Ze worden nooit bij elkaar opgeteld.</p>
+  <p class="ugp"><b>Uitgangspunten</b></p><ul><li><b>Verwacht:</b> uit Inkomen, Vast en terugkerend en verwachtingen bij Invoeren.</li><li><b>Werkelijk:</b> uit Invoeren → Per maand.</li><li>Grote uitgaven die je afschrijft staan als aparte regel "Afschrijving".</li></ul>`],
+ instellingen:['Instellingen',`<p>Categorieën en hoofdgroepen, standaardaannames, personen en je gegevens. Kies bovenaan een onderdeel.</p>
+  <p class="ugp"><b>Uitgangspunten</b></p><ul><li><b>Inflatie, rendement en inkomensgroei:</b> gelden voor alle jaren, tenzij je bij Planning → Per jaar een jaar aanpast.</li>
+  <li><b>Gemiddelde van … maanden</b> (nu {BN}): de basis voor de uitgaven in de planning.</li>
+  <li><b>Rendement per rekening voor de eerste … jaren</b> (nu {RY}): daarna het algemene rendementspercentage.</li>
+  <li><b>Gegevens en back-up:</b> back-up downloaden of terugzetten, en een lokale map kiezen zodat app en gegevens ook offline op je laptop staan.</li></ul>`],
+ rendement:['Rendement',`<p>Kies bovenaan een onderdeel: <b>Verwacht</b> (komende jaren), <b>Tot nu</b> (behaald), <b>Box 3</b> en <b>Verdeling</b>. De planning gebruikt het verwachte rendement per rekening voor de eerste {RY} jaar, daarna het percentage uit Instellingen.</p><p><b>Verwacht rendement komende jaren</b>, per rekening:</p>
   <ul><li><span class="badge g">zeker</span> <b>Deposito's:</b> vaste rente op de uitkeringsdatum of de einddatum; de rente gaat naar je betaalrekening (geen rente op rente). <i>Voorbeeld:</i> €6.000 × 2,5% over 2 jaar = €300, alleen in het jaar van de einddatum.</li>
   <li><span class="badge">verwacht</span> <b>Spaarrekeningen:</b> het ingestelde (variabele) rentepercentage, met rente op rente.</li>
   <li><span class="badge">verwacht</span> <b>Goud, aandelen, crypto:</b> het verwachte rendement dat je per rekening instelt (Bewerken).</li></ul>
@@ -2841,31 +3033,31 @@ const HELP={
   <p><b>Verwacht tegenover werkelijk:</b> de app onthoudt de verwachting voor elk komend jaar (de laatste stand vóór 1 januari). Na afloop van het jaar zie je die naast het werkelijke rendement.</p>
   <p><b>Vermogensbelasting (box 3):</b> de app telt je saldi op 1 januari op (spaargeld en overige bezittingen), trekt het heffingsvrij vermogen af en rekent met de fictieve percentages van de Belastingdienst; daarover betaal je 36%. Daarnaast rekent hij met je werkelijke rendement over je hele box 3-vermogen (zonder vrijstelling). Je betaalt het laagste bedrag. <i>Voorbeeld 2026:</i> € 150.000 spaargeld, fiscale partners: (€ 150.000 − € 118.714) × 1,28% × 36% ≈ € 144. Met de vinkjes in de kaart bepaal je per rekening of hij meetelt (vinkje aan = telt mee).</p>
   <p><b>Rendement tot nu:</b> bij rekeningen met rente telt eerst de rente die je echt hebt ontvangen; anders een schatting op basis van saldi en rente. Bij goud en beleggingen: waardestijging min bijgestorte bedragen.</p>`],
- prognose:['30 jaar',`<p>Een berekening van je vermogen over 30 jaar. Geen garantie en geen beleggingsadvies.</p>
-  <p><b>Per jaar:</b> vermogen begin + rendement + inkomsten − uitgaven = vermogen eind.</p>
-  <ul><li><b>Start:</b> je vermogen van vandaag, plus de verwachte inkomsten en uitgaven in de rest van dit jaar.</li>
-  <li><b>Inkomsten:</b> volgens Inkomen plannen, met de inkomensgroei erbij; salaris stopt op de stopdatum uit Instellingen.</li>
-  <li><b>Uitgaven:</b> gemiddelde van de werkelijke uitgaven over de laatste 24 maanden, met inflatie, plus wijzigingen in vaste lasten (Vaste posten), plus toekomstige aankopen in het jaar van betaling.</li>
-  <li><b>Rendement:</b> het percentage uit Instellingen (of per jaar in de tabel) over het vermogen aan het begin van het jaar.</li>
-  <li><b>Persoonlijke inflatie:</b> staat het vinkje bij Analyse aan, dan stijgen je uitgaven met de inflatie-aanname uit Instellingen plus jouw persoonlijke afwijking (zie Analyse), en blijven je hypotheek en andere vaste bedragen gelijk. Het grijze percentage in de tabel is jouw verwachte inflatie voor dat jaar; een ingevuld percentage geldt voor alles in dat jaar.</li>
-  <li><b>Euro's van nu:</b> corrigeert alles voor inflatie. Inkomen dat minder groeit dan de inflatie daalt dan; uitgaven blijven gelijk.</li></ul>
-  <p><i>Voorbeeld:</i> €300.000 begin + 4% rendement (€12.000) + €60.000 inkomsten − €70.000 uitgaven (incl. een auto) = €302.000: het vermogen stijgt toch, omdat het rendement het tekort goedmaakt.</p>`],
- instellingen:['Instellingen',`<p>Categorieën, standaardaannames (inflatie, rendement, inkomensgroei, grensbedrag investeringen), personen met geboortedatum en stopdatum, en je gegevens (back-up).</p>
-  <p><b>Back-up kopiëren/downloaden</b> maakt een kopie van al je gegevens; met <b>Back-up plakken/terugzetten</b> zet je die terug.</p>`]
+ analyse:['Analyse',`<p>Waar het geld naartoe gaat en waar het vandaan komt, op basis van je werkelijke bedragen.</p><p><b>Onderdelen:</b> kies bovenaan wat je wilt zien: per maand, per categorie, per jaar en verdeling, jaren vergelijken of je persoonlijke inflatie.</p><p><b>Hoofdgroepen of categorieën:</b> kies bovenaan het niveau. Hoofdgroepen bundelen je categorieën; klik op een hoofdgroep voor de categorieën erin. Je hoofdgroepen maak, hernoem en vul je zelf bij Instellingen → Hoofdgroepen. Klik op een <b>?</b> bij een tabel of grafiek voor korte uitleg.</p>
+  <ul><li><b>Per jaar:</b> klik op een staaf om dat jaar te kiezen.</li><li><b>Taartdiagram:</b> klik op een categorie voor de subcategorieën; bij Afschrijving zie je de investeringen.</li><li><b>Jaren vergelijken:</b> vink jaren aan om categorieën of subcategorieën naast elkaar te zetten.</li></ul>
+  <p>Het lopende jaar telt tot en met de huidige maand.</p>
+  <p><b>Jouw persoonlijke inflatie</b> (onderaan): de app haalt elke twee weken de prijsstijging per categorie op bij het CBS (jaarmutatie van de consumentenprijsindex). Per categorie: jouw aandeel in de uitgaven van de laatste 12 maanden × de prijsstijging = bijdrage. Alle bijdragen samen zijn jouw inflatie. <i>Voorbeeld:</i> boodschappen zijn 18% van je uitgaven en worden 3,4% duurder: 0,18 × 3,4 = 0,61 procentpunt.</p>
+  <ul><li><b>Categorieën koppelen:</b> de app stelt per categorie een CBS-categorie voor; je kunt dat aanpassen of een eigen percentage invullen.</li><li><b>Hypotheek:</b> telt niet mee (het CBS ziet een koopwoning als investering) en blijft in de planning per jaar gelijk.</li><li><b>Investeringen:</b> een auto telt mee met de afschrijving per maand (aanschaf van voertuigen); andere investeringen standaard niet.</li><li><b>Maandcijfer:</b> het CBS meet de inflatie per maand: de prijzen van die maand vergeleken met dezelfde maand een jaar eerder (oktober tegenover oktober). De app gebruikt het gemiddelde van de laatste 12 maandcijfers, net als het CBS voor een heel jaar.</li><li><b>Lange termijn (30 jaar):</b> de inflatie-aanname uit Instellingen plus jouw vaste afwijking van het landelijk gemiddelde (over 10 jaar, maximaal 1,5 procentpunt). Het eerste jaar ligt tussen je huidige inflatie en die waarde in.</li></ul>`]
 };
+function helpFill(t){ return String(t).replace(/\{BN\}/g,baseN()).replace(/\{RY\}/g,S.settings.rendYears??3); }
 function helpModal(){
   const h=HELP[view]; if(!h) return;
-  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal helpm"><h3>${esc(h[0])} – uitleg</h3><div class="helptxt">${h[1]}</div><div class="actions"><button class="btn" id="hClose">Sluiten</button></div></div></div>`;
+  $('#modalRoot').innerHTML=`<div class="ov" id="ov"><div class="modal helpm"><h3>${esc(h[0])} – uitleg</h3><div class="helptxt">${helpFill(h[1])}</div><div class="actions"><button class="btn" id="hClose">Sluiten</button></div></div></div>`;
   $('#hClose').onclick=closeModal; $('#ov').addEventListener('mousedown',e=>{ if(e.target.id==='ov') closeModal(); });
 }
 function addHelpBtn(){ const h1=document.querySelector('#main h1'); if(h1 && HELP[view] && !h1.querySelector('.helpbtn')) h1.insertAdjacentHTML('beforeend',' <button class="helpbtn" data-a="help" title="Uitleg bij deze pagina" aria-label="Uitleg">?</button>'); }
 function render(){
-  _cpiMemo=null; _cpiRowsMemo=null; _lfMemo=null;
-  view=(location.hash.slice(1)||'overzicht'); if(!VIEWS.some(v=>v[0]===view)) view='overzicht';
+  _cpiMemo=null; _cpiRowsMemo=null; _lfMemo=null; _peMemo=null;
+  view=(location.hash.slice(1)||'overzicht');
+  { const g=NAV.find(n=>n[0]===view&&n[2].length>1); if(g) view=lastSub[g[0]]||g[2][0]; }
+  if(!VIEWS.some(v=>v[0]===view)) view='overzicht';
+  { const g=navOf(view); if(g) lastSub[g[0]]=view; }
   renderNav();
   const fn={kort:vKort,inkomen:vInkomen,vrij:vVrij,analyse:vAnalyse,invoer:vInvoer,overzicht:vOverzicht,rekeningen:vRekeningen,maand:vMaand,vast:vVast,investeringen:vInvesteringen,rendement:vRendement,prognose:vPrognose,instellingen:vInstellingen}[view];
-  $('#main').innerHTML=fn();
+  const grp=navOf(view);
+  $('#main').innerHTML=(grp&&grp[2].length>1?`<div class="toggle subtabs" style="margin:0 0 14px;flex-wrap:wrap">${grp[2].map(v=>`<a href="#${v}" class="${v===view?'on':''}" style="padding:7px 14px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;${v===view?'background:#fff;color:var(--b800);box-shadow:0 1px 2px rgba(0,0,0,.08)':'color:var(--muted)'}">${SUBNAME[v]}</a>`).join('')}</div>`:'')+fn();
   addHelpBtn(); addCardHelp();
+  if(view==='rendement') applyRendSec();
   if(view==='analyse') applyAnSec();
   if(view==='instellingen') applySetSec();
   if(view==='kort') kortAfter(true);
@@ -2936,6 +3128,11 @@ document.addEventListener('click',e=>{
     case 'editAct': { const x=S.actuals.find(z=>z.id===id); actualForm(x.kind,x); break; }
     case 'delAct': { const x=S.actuals.find(z=>z.id===id); confirmBox('Dit bedrag wordt verwijderd.'+((x&&x.att&&x.att.length)?` De ${x.att.length===1?'bijlage wordt':x.att.length+' bijlagen worden'} ook verwijderd.`:''),()=>{ attDelAll(x); S.actuals=S.actuals.filter(z=>z.id!==id); }); break; }
     case 'att': attModal(id); break;
+    case 'todo': todoGo(b.dataset.i); break;
+    case 'ldirChoose': ldirChoose(); break;
+    case 'ldirGrant': ldirGrant(); break;
+    case 'ldirSync': lfsSyncAll(); break;
+    case 'ldirForget': ldirForget(); break;
     case 'amShow': case 'amShowAll': { S.settings.amOff=a==='amShowAll'?[]:(S.settings.amOff||[]).filter(x=>x!==id); save(); keepScroll(); break; }
     case 'addExp': expectedForm(null,selYm); break;
     case 'editExp': expectedForm(S.expected.find(z=>z.id===id)); break;
@@ -2945,6 +3142,7 @@ document.addEventListener('click',e=>{
     case 'chelp': e.preventDefault(); e.stopPropagation(); cardHelpModal(b.dataset.k); break;
     case 'hgMigrate': confirmBox('Je hoofdgroepen worden je uitgavencategorieën. Je oude categorieën worden subcategorieën eronder. Alle bedragen gaan mee. Doorgaan?',()=>hgMigrate(),'Omzetten'); break;
     case 'hgSel': case 'hgKind': case 'hgAdd': case 'hgDel': case 'hgUn': case 'hgAuto': case 'hgClear': if(a==='hgSel' && e.target.closest('input')){ hgSel=b.dataset.id; document.querySelectorAll('#hgCard [data-a=hgSel]').forEach(x=>x.style.border=x===b?'2px solid var(--b500,#2a78d6)':''); break; } hgAction(a,b); break;
+    case 'rendSec': rendSec=b.dataset.v; applyRendSec(); window.scrollTo(0,0); break;
     case 'setSec': setSec=b.dataset.v; applySetSec(); window.scrollTo(0,0); break;
     case 'anSec': anSec=b.dataset.v; applyAnSec(); window.scrollTo(0,0); break;
     case 'anLevel': anLevel=b.dataset.v; anFocus=null; anPieCat=null; keepScroll(); break;
@@ -2954,9 +3152,9 @@ document.addEventListener('click',e=>{
     case 'kortInc': kortInc=b.dataset.v; keepScroll(); break;
     case 'incOnce': onceForm(b.dataset.p||''); break;
     case 'incAdd': recurringForm('in',null,{person:b.dataset.p||'',cat:'Salaris'}); break;
-    case 'incClear': confirmBox('Alle <b>verwachte</b> inkomsten voor de toekomst bij Invoeren worden gewist (jaaroverzicht en losse verwachtingen). Daarna tellen alleen nog de inkomsten op de pagina Inkomen plannen. Werkelijk ontvangen bedragen blijven staan.',()=>{ const c=curYm(); S.incPlan=S.incPlan.filter(p=>p.only? p.from<c : false); S.expected=S.expected.filter(e=>!(e.kind==='in'&&e.ym>=c)); },'Wissen'); break;
+    case 'incClear': confirmBox('Alle <b>verwachte</b> inkomsten voor de toekomst bij Invoeren worden gewist (jaaroverzicht en losse verwachtingen). Daarna tellen alleen nog de inkomsten op de pagina Planning → Inkomen. Werkelijk ontvangen bedragen blijven staan.',()=>{ const c=curYm(); S.incPlan=S.incPlan.filter(p=>p.only? p.from<c : false); S.expected=S.expected.filter(e=>!(e.kind==='in'&&e.ym>=c)); },'Wissen'); break;
     case 'editRec': { const r=S.recurring.find(z=>z.id===id); recurringForm(r.kind,r); break; }
-    case 'delRec': del('recurring','Deze vaste post wordt verwijderd, ook voor de maanden in het verleden. Wil je hem alleen laten stoppen? Vul dan bij Bewerken een laatste termijn in.'); break;
+    case 'delRec': { const x=S.recurring.find(z=>z.id===id); confirmBox('Deze vaste post wordt verwijderd, ook voor de maanden in het verleden. Wil je hem alleen laten stoppen? Vul dan bij Bewerken een laatste termijn in.'+((x&&x.att&&x.att.length)?' De bijlagen worden ook verwijderd.':''),()=>{ attDelAll(x); S.recurring=S.recurring.filter(z=>z.id!==id); }); break; }
     case 'addPlan': plannedForm(); break;
     case 'editPlan': plannedForm(S.planned.find(z=>z.id===id)); break;
     case 'delPlan': del('planned','Deze geplande uitgave wordt verwijderd.'); break;
@@ -2969,6 +3167,7 @@ document.addEventListener('click',e=>{
       const rv=$('#s_reinv').value.trim(); S.settings.reinvestRate=rv===''?null:parseNum(rv); if(rv!==''&&isNaN(S.settings.reinvestRate)){ toast('Controleer het herbeleggingspercentage'); return; }
       const sl=parseNum($('#s_scenLow').value), sh=parseNum($('#s_scenHigh').value); if(!isNaN(sl)) S.settings.scenLow=sl; if(!isNaN(sh)) S.settings.scenHigh=sh;
       S.settings.box3Partner=$('#s_b3partner').checked;
+      { const bm=parseInt($('#s_baseMonths').value,10), ry=parseInt($('#s_rendYears').value,10); if(isNaN(bm)||bm<3||bm>36){ toast('Kies voor het gemiddelde 3 tot 36 maanden'); return; } if(isNaN(ry)||ry<0||ry>10){ toast('Kies 0 tot 10 jaar voor rendement per rekening'); return; } S.settings.baseMonths=bm; S.settings.rendYears=ry; }
       { const sf=parseInt($('#s_showFrom').value,10); if(!isNaN(sf)&&sf>1990&&sf<=curY()) S.settings.showFrom=sf; else { toast('Vul bij "Toon jaren vanaf" een jaartal in'); return; } }
       Object.assign(S.settings,vals); S.settings.people=$('#s_people').value.split(',').map(x=>x.trim()).filter(Boolean); save(); render(); toast('Instellingen opgeslagen'); break; }
     case 'catAdd': { const k=b.dataset.kind, el=$('#newCat_'+k), nm=el.value.trim(), list=k==='uit'?S.expCats:S.incCats;
