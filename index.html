@@ -642,7 +642,7 @@ function cpiMapOf(key){
   return cpiSuggest(key)||(S.cpi&&S.cpi.cats&&S.cpi.cats['000000']?'code:000000':'none');
 }
 const cpiIncluded=m=>!!m && (m.startsWith('code:')||m.startsWith('pct:'));
-function cpiRateNow(m){ if(!m) return null; if(m.startsWith('pct:')) return parseNum(m.slice(4)); if(m.startsWith('code:')){ const o=S.cpi&&S.cpi.cats[m.slice(5)]; return o&&o.yoy!=null?o.yoy:null; } return null; }
+function cpiRateNow(m){ if(!m) return null; if(m.startsWith('pct:')) return parseNum(m.slice(4)); if(m.startsWith('code:')){ const o=S.cpi&&S.cpi.cats[m.slice(5)]; return o?(o.avg12??o.yoy??null):null; } return null; }
 function cpiRateLong(m){ if(!m) return null; if(m.startsWith('pct:')) return parseNum(m.slice(4)); if(m.startsWith('code:')){ const c=m.slice(5), L=(S.cpi&&S.cpi.long)||{}; if(L[c]!=null) return L[c]; const n=cpiRateNow(m); if(n!=null) return n; return L['000000']??null; } return null; }
 const cpiLabel=m=>!m?'–':m==='vast'?'Vast bedrag (stijgt niet mee)':m==='none'?'Telt niet mee':m.startsWith('pct:')?'Eigen percentage: '+m.slice(4)+'%':((S.cpi&&S.cpi.cats[m.slice(5)])?S.cpi.cats[m.slice(5)].t:'CBS '+m.slice(5));
 /* Uitgaven per sleutel over de laatste 12 volledige maanden (met afschrijvingen) */
@@ -676,16 +676,18 @@ function cpiBase24(){
   return b;
 }
 const recKey=r=>/hypothe/i.test(r.name||'')?r.cat+'|Hypotheek':r.cat;
+/* Lange termijn: jouw inflatie = de inflatie-aanname uit Instellingen + jouw vaste afwijking van het landelijk gemiddelde (10 jaar).
+   Geen opstapeling per categorie: anders zouden categorieën die hard stegen steeds zwaarder gaan wegen en loopt de inflatie onrealistisch op. */
+function cpiSpread(){ const R=cpiRows(), L=(S.cpi&&S.cpi.long)||{}; if(R.long==null||L['000000']==null) return 0; return Math.max(-1.5,Math.min(1.5,R.long-L['000000'])); }
 function cpiProj(){
   if(_cpiMemo) return _cpiMemo;
   const cy=curY(), base=cpiBase24(); const keys=new Set(Object.keys(base)); for(const r of S.recurring) if(r.kind==='uit') keys.add(recKey(r));
   const F={}, maps={}; for(const k of keys){ F[k]={[cy]:1}; maps[k]=cpiMapOf(k); }
-  const rate={};
+  const spread=cpiSpread(), longRate=(+S.settings.infl||0)+spread, now=cpiRows().now, rate={};
   for(let y=cy+1;y<=cy+31;y++){ const ov=(S.years[y]||{}).infl;
-    let num=0, den=0; for(const k of keys){ const m=maps[k]; if(!cpiIncluded(m)) continue; const r=ov??cpiRateLong(m); if(r==null) continue; const w=(base[k]||0)*F[k][y-1]; num+=w*r; den+=w; }
-    const basket=ov??(den?num/den:S.settings.infl); rate[y]=basket;
-    for(const k of keys){ const m=maps[k]; const r=m==='vast'?0:cpiIncluded(m)?(ov??cpiRateLong(m)??basket):basket; F[k][y]=F[k][y-1]*(1+r/100); } }
-  return _cpiMemo={base,F,maps,rate};
+    const r=ov??(y===cy+1&&now!=null?(now+longRate)/2:longRate); rate[y]=r;
+    for(const k of keys){ F[k][y]=F[k][y-1]*(1+(maps[k]==='vast'?0:r)/100); } }
+  return _cpiMemo={base,F,maps,rate,spread,longRate};
 }
 function cpiExpYear(y){ const P=cpiProj(); return sum(Object.entries(P.base).map(([k,v])=>v*12*P.F[k][y])); }
 function cpiFixAdj(y,fixNowByKey){ const P=cpiProj(); let t=0; const inY={};
@@ -715,9 +717,10 @@ async function cpiFetch(manual){
   if(cpiBusy) return; cpiBusy=true; cpiErr=''; if(manual) toast('Cijfers ophalen bij het CBS…'); keepScroll();
   try{
     const keep=c=>/^\d{3}000$/.test(c);
-    const cur=await cbsTable(CBS_NEW, ps=>ps.filter(p=>/MM\d\d$/.test(p)).sort().slice(-3));
-    const cats={}; let period='';
-    for(const r of cur.sort((a,b)=>a.per<b.per?-1:1)){ if(!keep(r.code)||r.yoy==null) continue; cats[r.code]={t:r.t,yoy:+r.yoy,w:r.w!=null?+r.w:null,per:r.per}; if(r.per>period) period=r.per; }
+    const cur=await cbsTable(CBS_NEW, ps=>ps.filter(p=>/MM\d\d$/.test(p)).sort().slice(-12));
+    const cats={}, hist={}; let period='';
+    for(const r of cur.sort((a,b)=>a.per<b.per?-1:1)){ if(!keep(r.code)||r.yoy==null) continue; cats[r.code]={t:r.t,yoy:+r.yoy,w:r.w!=null?+r.w:null,per:r.per}; (hist[r.code] ||= []).push(+r.yoy); if(r.per>period) period=r.per; }
+    for(const [c,a] of Object.entries(hist)) if(a.length>=6) cats[c].avg12=Math.round(sum(a)/a.length*100)/100;
     if(!Object.keys(cats).length) throw new Error('Geen cijfers ontvangen');
     let long={}, longFrom=null, longTo=null;
     try{ const yrs=[]; for(let y=curY()-10;y<curY();y++) yrs.push(y+'JJ00');
@@ -734,20 +737,20 @@ const perNl=p=>{ const m=String(p||'').match(/^(\d{4})MM(\d\d)$/); return m?mLon
 
 function cpiCard(){
   cpiAuto();
-  const R=cpiRows(), has=!!(S.cpi&&S.cpi.cats), tot=has&&S.cpi.cats['000000']?S.cpi.cats['000000'].yoy:null;
+  const R=cpiRows(), has=!!(S.cpi&&S.cpi.cats), tot=has&&S.cpi.cats['000000']?S.cpi.cats['000000'].yoy:null, totA=has&&S.cpi.cats['000000']?(S.cpi.cats['000000'].avg12??tot):null, P0=cpiProj();
   const f1=v=>Math.abs(v).toFixed(1).replace('.',','), f2=v=>Math.abs(v).toFixed(2).replace('.',',');
   const sg=v=>v==null?'–':(v<0?'−':'+')+f1(v)+'%';
   const nm=k=>k.startsWith('inv:')?esc(k.slice(4))+' <span class="badge">afschrijving</span>':esc(k.replace('|',' › '));
   const incRows=R.list.filter(r=>r.inc), exc=R.list.filter(r=>!r.inc);
   const status=cpiBusy?'<span class="badge">ophalen…</span>':has?`CBS-cijfers van ${perNl(S.cpi.period)} · opgehaald ${dNl(S.cpi.at)}`:'Nog geen CBS-cijfers';
-  return `<div class="card" id="cpiCard"><div class="row" style="align-items:flex-start"><div><h2 style="margin:0">Jouw persoonlijke inflatie</h2><p class="small muted" style="margin:4px 0 0">Prijsstijging per categorie volgens het CBS, gewogen naar jouw uitgaven van de laatste 12 maanden.</p></div><span class="spacer"></span><button class="btn sec sm" data-a="cpiMap">Categorieën koppelen</button></div>
+  return `<div class="card" id="cpiCard"><div class="row" style="align-items:flex-start"><div><h2 style="margin:0">Jouw persoonlijke inflatie</h2><p class="small muted" style="margin:4px 0 0">Prijsstijging per categorie volgens het CBS (gemiddelde van de laatste 12 maanden), gewogen naar jouw uitgaven van de laatste 12 maanden.</p></div><span class="spacer"></span><button class="btn sec sm" data-a="cpiMap">Categorieën koppelen</button></div>
   ${cpiErr?`<div class="warn" style="margin-top:10px">${esc(cpiErr)} ${has?'De app gebruikt de laatst opgehaalde cijfers.':'Kies bij <b>Categorieën koppelen</b> per categorie "Eigen percentage" om het zelf in te vullen, of probeer het later opnieuw.'}</div>`:''}
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0">
-    <div class="stat" style="background:var(--b100);border-radius:10px;padding:10px 12px"><div class="small muted">Jouw inflatie</div><div style="font-size:24px;font-weight:700">${R.now==null?'–':numIn(Math.round(R.now*10)/10)+'%'}</div></div>
-    <div style="background:#f3f6fa;border-radius:10px;padding:10px 12px"><div class="small muted">Landelijk (CBS)</div><div style="font-size:24px;font-weight:700">${tot==null?'–':numIn(tot)+'%'}</div></div>
-    <div style="background:#f3f6fa;border-radius:10px;padding:10px 12px" title="Gemiddelde prijsstijging per categorie over ${S.cpi&&S.cpi.longFrom?S.cpi.longFrom+'–'+S.cpi.longTo:'de afgelopen jaren'}, gewogen naar jouw uitgaven. Dit gebruikt de 30-jaarsplanning."><div class="small muted">Langjarig gemiddelde</div><div style="font-size:24px;font-weight:700">${R.long==null?'–':numIn(Math.round(R.long*10)/10)+'%'}</div></div>
+    <div class="stat" style="background:var(--b100);border-radius:10px;padding:10px 12px" title="Gemiddelde over de laatste 12 maanden, gewogen naar jouw uitgaven"><div class="small muted">Jouw inflatie (gem. 12 mnd)</div><div style="font-size:24px;font-weight:700">${R.now==null?'–':numIn(Math.round(R.now*10)/10)+'%'}</div></div>
+    <div style="background:#f3f6fa;border-radius:10px;padding:10px 12px" title="Het landelijke inflatiecijfer is per maand: de prijzen van die maand vergeleken met dezelfde maand een jaar eerder. Hier het gemiddelde van de laatste 12 maanden, en daaronder het cijfer van de laatste maand."><div class="small muted">Landelijk (CBS, gem. 12 mnd)</div><div style="font-size:24px;font-weight:700">${totA==null?'–':numIn(Math.round(totA*10)/10)+'%'}</div>${tot!=null?`<div class="small muted">${perNl(S.cpi.period)}: ${numIn(tot)}%</div>`:''}</div>
+    <div style="background:#f3f6fa;border-radius:10px;padding:10px 12px" title="Wat de 30-jaarsplanning gebruikt: de inflatie-aanname uit Instellingen plus jouw vaste afwijking van het landelijk gemiddelde over ${S.cpi&&S.cpi.longFrom?S.cpi.longFrom+'–'+S.cpi.longTo:'de afgelopen jaren'}."><div class="small muted">Lange termijn (30 jaar)</div><div style="font-size:24px;font-weight:700">${has&&R.now!=null?numIn(Math.round(P0.longRate*10)/10)+'%':'–'}</div>${has&&R.now!=null?`<div class="small muted">${numIn(+S.settings.infl)}% aanname ${P0.spread<0?'−':'+'} ${numIn(Math.abs(Math.round(P0.spread*10)/10))}% jouw afwijking</div>`:''}</div>
   </div>
-  ${incRows.length?`<div class="tablewrap"><table><tr><th>Categorie</th><th class="n">Jouw aandeel</th><th class="n"></th><th class="n">Prijsstijging (CBS)</th><th class="n"></th><th class="n">Bijdrage</th></tr>
+  ${incRows.length?`<div class="tablewrap"><table><tr><th>Categorie</th><th class="n">Jouw aandeel</th><th class="n"></th><th class="n">Prijsstijging (CBS, gem. 12 mnd)</th><th class="n"></th><th class="n">Bijdrage</th></tr>
   ${incRows.map(r=>`<tr><td>${nm(r.key)}<div class="small muted">${esc(cpiLabel(r.m))}</div></td><td class="n">${P(r.share)}<div class="small muted">${E(r.amt)}</div></td><td class="n muted">×</td><td class="n ${r.rate>=4?'neg':r.rate<0?'pos':''}">${sg(r.rate)}</td><td class="n muted">=</td><td class="n"><b class="${r.contrib<0?'pos':''}">${(r.contrib<0?'−':'')+f2(r.contrib)}</b></td></tr>`).join('')}
   <tr class="tot"><td>Totaal</td><td class="n">100%</td><td></td><td></td><td></td><td class="n"><b>${R.now==null?'–':numIn(Math.round(R.now*10)/10)+'%'}</b></td></tr></table></div>
   <p class="small muted">Voorbeeld: ${incRows[0]?`${esc(incRows[0].key.replace('|',' › ').replace(/^inv:/,''))} is ${P(incRows[0].share)} van je uitgaven × ${sg(incRows[0].rate)} prijsstijging = ${f2(incRows[0].contrib)} procentpunt van je inflatie.`:''}</p>`
@@ -1657,24 +1660,25 @@ function accMonthCard(){
   const from=ymI(showFrom()+'-01'), to=ymI(curYm()); if(to<from) return '';
   const all=S.accounts.filter(a=>!a.closed || a.closed>=showFrom()+'-01');
   if(!all.length) return '';
-  const off0=new Set(S.settings.amOff||[]), accs=all.filter(a=>!off0.has(a.id)), hidden=all.filter(a=>off0.has(a.id));
-  const months=[]; for(let i=to;i>=from;i--) months.push(iYm(i));
-  const off=new Set(S.settings.amOff||[]), isOn=a=>!off.has(a.id);
-  const sd=d=>{ const [y,m,dd]=d.split('-'); return +dd+' '+MN[+m-1]+(y.slice(2)!==''?' '+y.slice(2):''); };
-  const rows=months.map(ym=>{ const end=iYm(ymI(ym)+1)+'-01'; let tot=0, miss=0;
-    const cells=accs.map(a=>{ const dim=isOn(a)?'':' style="opacity:.35"';
-      if(!isOn(a)){ const m=(!(a.start&&a.start>end)&&!(a.closed&&a.closed<=end))?valueAt(a.id,end):null; return `<td class="n"${dim}>${m?E(m.value):'–'}</td>`; }
-      if(a.start && a.start>end) return `<td class="n muted small">nog niet geopend</td>`;
-      if(a.closed && a.closed<=end){ if(a.closed>ym+'-01') return `<td class="n" title="Gesloten op ${dNl(a.closed)}">${E(0)}<div class="small muted">gesloten ${sd(a.closed)}</div></td>`; return `<td class="n muted small">gesloten</td>`; }
-      const m=valueAt(a.id,end); const ld=lastDay(ym);
-      if(!m){ miss++; return `<td class="n"><button class="btn ghost sm" data-a="meas" data-id="${a.id}" data-date="${ld}" title="Saldo invoeren voor eind ${mLong(ym)}" style="color:#c0392b !important">onbekend ✎</button></td>`; }
-      tot+=m.value; const old=m.date<=ym+'-01' && a.type!=='deposito';
-      return `<td class="n" ${old?`title="Geen saldo in ${mLong(ym)}: het laatst bekende saldo (${dNl(m.date)}) is gebruikt. Klik op de datum om een saldo in te voeren."`:`title="Saldo van ${dNl(m.date)}"`}>${E(m.value)}<div class="small ${old?'':'muted'}" style="${old?'color:#b26b00':''}">${old?`<button class="btn ghost sm" data-a="meas" data-id="${a.id}" data-date="${ld}" style="padding:0;color:#b26b00">${sd(m.date)} ✎</button>`:sd(m.date)}</div></td>`; });
-    return `<tr><th style="text-align:left;white-space:nowrap;position:sticky;left:0;background:#f3f6fa;z-index:1">${MN[+ym.slice(5)-1]} ${ym.slice(0,4)}</th>${cells.join('')}<td class="n"><b>${E(tot)}</b>${miss?`<div class="small" style="color:var(--neg)">${miss} onbekend</div>`:''}</td></tr>`; }).join('');
-  return `<details class="card" style="margin-top:14px" ${window._amOpen?'open':''} ontoggle="window._amOpen=this.open"><summary style="cursor:pointer;font-weight:700">Vermogen per maand, per rekening</summary>
-  <p class="small muted">De stand aan het eind van elke maand en de datum van het saldo dat daarvoor is gebruikt: het laatste saldo tot en met de 1e van de volgende maand. <span style="color:#b26b00">Oranje datum</span> = geen saldo in die maand, het laatst bekende saldo is gebruikt (klik om een saldo in te voeren; bij deposito's is dat normaal, want het bedrag staat vast). Haal je bovenaan een vinkje weg, dan verdwijnt die rekening uit dit overzicht en telt ze niet mee in het totaal; met de knop "+ naam" boven de tabel haal je haar terug. De rest van de app verandert daar niet door. <span style="color:var(--neg)">Onbekend</span> = nog nooit een saldo ingevoerd; telt niet mee in het totaal.</p>
+  const off=new Set(S.settings.amOff||[]), accs=all.filter(a=>!off.has(a.id)), hidden=all.filter(a=>off.has(a.id));
+  const months=[]; for(let i=from;i<=to;i++) months.push(iYm(i));
+  const sd=d=>{ const [y,m,dd]=d.split('-'); return +dd+' '+MN[+m-1]+' '+y.slice(2); };
+  const tot=months.map(()=>0), miss=months.map(()=>0);
+  const cell=(a,ym,mi)=>{ const end=iYm(ymI(ym)+1)+'-01', ld=lastDay(ym);
+    if(a.start && a.start>end) return `<td class="n muted small">nog niet geopend</td>`;
+    if(a.closed && a.closed<=end){ if(a.closed>ym+'-01') return `<td class="n" title="Gesloten op ${dNl(a.closed)}">${E(0)}<div class="small muted">gesloten ${sd(a.closed)}</div></td>`; return `<td class="n muted small">gesloten</td>`; }
+    const m=valueAt(a.id,end);
+    if(!m){ miss[mi]++; return `<td class="n"><button class="btn ghost sm" data-a="meas" data-id="${a.id}" data-date="${ld}" title="Saldo invoeren voor eind ${mLong(ym)}" style="color:#c0392b !important">onbekend ✎</button></td>`; }
+    tot[mi]+=m.value; const old=m.date<=ym+'-01' && a.type!=='deposito';
+    return `<td class="n" ${old?`title="Geen saldo in ${mLong(ym)}: het laatst bekende saldo (${dNl(m.date)}) is gebruikt. Klik op de datum om een saldo in te voeren."`:`title="Saldo van ${dNl(m.date)}"`}>${E(m.value)}<div class="small ${old?'':'muted'}" style="${old?'color:#b26b00':''}">${old?`<button class="btn ghost sm" data-a="meas" data-id="${a.id}" data-date="${ld}" style="padding:0;color:#b26b00">${sd(m.date)} ✎</button>`:sd(m.date)}</div></td>`; };
+  const stickL='position:sticky;left:0;background:#f3f6fa;z-index:1;text-align:left;min-width:170px;max-width:220px;white-space:normal';
+  const head=`<tr><th style="position:sticky;left:0;top:0;z-index:3;background:#eef3fa;text-align:left">Rekening</th>${months.map(ym=>`<th class="n" style="position:sticky;top:0;z-index:2;background:#eef3fa;white-space:nowrap;min-width:92px${ym.endsWith('-01')?';border-left:2px solid #c9d6e8':''}">${MN[+ym.slice(5)-1]} ${ym.slice(2,4)}</th>`).join('')}</tr>`;
+  const body=accs.map(a=>`<tr><th style="${stickL}"><label style="cursor:pointer;display:flex;gap:6px;align-items:flex-start;font-weight:600;text-transform:none;letter-spacing:0" title="Vinkje weghalen: rekening verbergen in dit overzicht"><input type="checkbox" class="amacc" data-id="${a.id}" checked style="margin-top:3px"> <span>${esc(a.name)}${a.closed?'<div class="small muted" style="font-weight:400">gesloten</div>':''}</span></label></th>${months.map((ym,mi)=>cell(a,ym,mi)).join('')}</tr>`).join('');
+  const foot=`<tr class="tot"><th style="${stickL};background:#eef3fa">Totaal${hidden.length?'<div class="small" style="color:#b26b00;font-weight:400">zonder verborgen</div>':''}</th>${months.map((ym,mi)=>`<td class="n"><b>${E(tot[mi])}</b>${miss[mi]?`<div class="small" style="color:#c0392b">${miss[mi]} onbekend</div>`:''}</td>`).join('')}</tr>`;
+  return `<details class="card" style="margin-top:14px" ${window._amOpen?'open':''} ontoggle="window._amOpen=this.open;if(this.open){const w=this.querySelector('.amwrap');if(w)w.scrollLeft=window._amSL??w.scrollWidth;}"><summary style="cursor:pointer;font-weight:700">Vermogen per maand, per rekening</summary>
+  <p class="small muted">De stand aan het eind van elke maand en de datum van het saldo dat daarvoor is gebruikt: het laatste saldo tot en met de 1e van de volgende maand. <span style="color:#b26b00">Oranje datum</span> = geen saldo in die maand, het laatst bekende saldo is gebruikt (klik om een saldo in te voeren; bij deposito's is dat normaal, want het bedrag staat vast). Haal je bij een rekening het vinkje weg, dan verdwijnt die rekening uit dit overzicht en telt ze niet mee in het totaal; met de knop "+ naam" boven de tabel haal je haar terug. De rest van de app verandert daar niet door. <span style="color:var(--neg)">Onbekend</span> = nog nooit een saldo ingevoerd; telt niet mee in het totaal.</p>
   ${hidden.length?`<div class="row" style="gap:6px;flex-wrap:wrap;margin:0 0 10px"><span class="small muted">Verborgen (telt niet mee):</span>${hidden.map(a=>`<button class="btn sec sm" data-a="amShow" data-id="${a.id}" title="Weer tonen">+ ${esc(a.name)}</button>`).join('')}${hidden.length>1?'<button class="btn ghost sm" data-a="amShowAll">Alles tonen</button>':''}</div>`:''}
-  <div class="tablewrap" style="max-height:75vh;overflow:auto"><table class="amtab" style="border-collapse:separate;border-spacing:0"><tr><th style="position:sticky;left:0;top:0;z-index:3;background:#eef3fa">Maand (eind)</th>${accs.map(a=>`<th class="n" style="white-space:normal;min-width:96px;position:sticky;top:0;z-index:2;background:#eef3fa"><label style="cursor:pointer;display:block" title="Aan- of uitvinken: telt mee in het totaal van dit overzicht"><input type="checkbox" class="amacc" data-id="${a.id}" ${isOn(a)?'checked':''}> ${esc(a.name)}</label>${a.closed?'<div class="small muted" style="text-transform:none">gesloten</div>':''}</th>`).join('')}<th class="n" style="position:sticky;top:0;z-index:2;background:#eef3fa">${hidden.length?'Totaal<div class="small" style="text-transform:none;color:#b26b00">zonder verborgen</div>':'Totaal'}</th></tr>${rows}</table></div></details>`;
+  <div class="tablewrap amwrap" style="max-height:75vh;overflow:auto"><table class="amtab" style="border-collapse:separate;border-spacing:0">${head}${body}${foot}</table></div></details>`;
 }
 function vRekeningen(){
   const st=monthStatus(curYm());
@@ -2549,7 +2553,7 @@ const HELP={
   <ul><li><b>Per jaar:</b> klik op een staaf om dat jaar te kiezen.</li><li><b>Taartdiagram:</b> klik op een categorie voor de subcategorieën; bij Afschrijving zie je de investeringen.</li><li><b>Jaren vergelijken:</b> vink jaren aan om categorieën of subcategorieën naast elkaar te zetten.</li></ul>
   <p>Het lopende jaar telt tot en met de huidige maand.</p>
   <p><b>Jouw persoonlijke inflatie</b> (onderaan): de app haalt elke twee weken de prijsstijging per categorie op bij het CBS (jaarmutatie van de consumentenprijsindex). Per categorie: jouw aandeel in de uitgaven van de laatste 12 maanden × de prijsstijging = bijdrage. Alle bijdragen samen zijn jouw inflatie. <i>Voorbeeld:</i> boodschappen zijn 18% van je uitgaven en worden 3,4% duurder: 0,18 × 3,4 = 0,61 procentpunt.</p>
-  <ul><li><b>Categorieën koppelen:</b> de app stelt per categorie een CBS-categorie voor; je kunt dat aanpassen of een eigen percentage invullen.</li><li><b>Hypotheek:</b> telt niet mee (het CBS ziet een koopwoning als investering) en blijft in de 30-jaarsplanning gelijk.</li><li><b>Investeringen:</b> een auto telt mee met de afschrijving per maand (aanschaf van voertuigen); andere investeringen standaard niet.</li><li><b>Langjarig gemiddelde:</b> de gemiddelde prijsstijging per categorie over de laatste 10 jaar, gewogen naar jouw uitgaven. Die gebruikt de 30-jaarsplanning, zodat één uitschieter (zoals energie in 2022) de prognose niet verstoort.</li></ul>`],
+  <ul><li><b>Categorieën koppelen:</b> de app stelt per categorie een CBS-categorie voor; je kunt dat aanpassen of een eigen percentage invullen.</li><li><b>Hypotheek:</b> telt niet mee (het CBS ziet een koopwoning als investering) en blijft in de 30-jaarsplanning gelijk.</li><li><b>Investeringen:</b> een auto telt mee met de afschrijving per maand (aanschaf van voertuigen); andere investeringen standaard niet.</li><li><b>Maandcijfer:</b> het CBS meet de inflatie per maand: de prijzen van die maand vergeleken met dezelfde maand een jaar eerder (oktober tegenover oktober). De app gebruikt het gemiddelde van de laatste 12 maandcijfers, net als het CBS voor een heel jaar.</li><li><b>Lange termijn (30 jaar):</b> de inflatie-aanname uit Instellingen plus jouw vaste afwijking van het landelijk gemiddelde (over 10 jaar, maximaal 1,5 procentpunt). Het eerste jaar ligt tussen je huidige inflatie en die waarde in.</li></ul>`],
  vast:['Vaste posten',`<p>Je vaste lasten zitten al in je werkelijke uitgaven, en daarmee in de planning (gemiddelde van de laatste 24 maanden). Je hoeft ze hier niet allemaal in te vullen.</p>
   <p>Gebruik deze pagina voor vaste lasten die <b>in de toekomst stoppen, beginnen of veranderen</b>: een lening of lease met einddatum, een premie die op een leeftijd stopt, reiskosten die stoppen bij pensioen, een nieuwe verzekering.</p>
   <p><b>Berekening:</b> de app kijkt alleen naar het <b>verschil met nu</b>. <i>Voorbeeld:</i> uitgaven €3.000 per maand inclusief €1.000 hypotheek die eind 2030 stopt → tot 2030 €3.000, vanaf 2031 €2.000 per maand (plus inflatie). Een vaste last die gewoon doorloopt verandert niets, dus er telt niets dubbel.</p>
@@ -2577,7 +2581,7 @@ const HELP={
   <li><b>Inkomsten:</b> volgens Inkomen plannen, met de inkomensgroei erbij; salaris stopt op de stopdatum uit Instellingen.</li>
   <li><b>Uitgaven:</b> gemiddelde van de werkelijke uitgaven over de laatste 24 maanden, met inflatie, plus wijzigingen in vaste lasten (Vaste posten), plus toekomstige aankopen in het jaar van betaling.</li>
   <li><b>Rendement:</b> het percentage uit Instellingen (of per jaar in de tabel) over het vermogen aan het begin van het jaar.</li>
-  <li><b>Persoonlijke inflatie:</b> staat het vinkje bij Analyse aan, dan groeit elke uitgavencategorie met haar eigen langjarige prijsstijging van het CBS, en blijven je hypotheek en andere vaste bedragen gelijk. Het grijze percentage in de tabel is jouw verwachte inflatie voor dat jaar; een ingevuld percentage geldt voor alles in dat jaar.</li>
+  <li><b>Persoonlijke inflatie:</b> staat het vinkje bij Analyse aan, dan stijgen je uitgaven met de inflatie-aanname uit Instellingen plus jouw persoonlijke afwijking (zie Analyse), en blijven je hypotheek en andere vaste bedragen gelijk. Het grijze percentage in de tabel is jouw verwachte inflatie voor dat jaar; een ingevuld percentage geldt voor alles in dat jaar.</li>
   <li><b>Euro's van nu:</b> corrigeert alles voor inflatie. Inkomen dat minder groeit dan de inflatie daalt dan; uitgaven blijven gelijk.</li></ul>
   <p><i>Voorbeeld:</i> €300.000 begin + 4% rendement (€12.000) + €60.000 inkomsten − €70.000 uitgaven (incl. een auto) = €302.000: het vermogen stijgt toch, omdat het rendement het tekort goedmaakt.</p>`],
  instellingen:['Instellingen',`<p>Categorieën, standaardaannames (inflatie, rendement, inkomensgroei, grensbedrag investeringen), personen met geboortedatum en stopdatum, en je gegevens (back-up).</p>
@@ -2597,6 +2601,7 @@ function render(){
   $('#main').innerHTML=fn();
   addHelpBtn();
   if(view==='kort') kortAfter(true);
+  { const w=document.querySelector('.amwrap'); if(w){ w.scrollLeft=window._amSL??w.scrollWidth; w.addEventListener('scroll',()=>{ window._amSL=w.scrollLeft; }); } }
 }
 
 /* ============ Acties ============ */
