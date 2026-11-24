@@ -1107,6 +1107,10 @@ function confirmBox(msg,onYes,yes='Verwijderen'){
 function toast(t){ const d=document.createElement('div'); d.className='toast'; d.textContent=t; document.body.appendChild(d); setTimeout(()=>d.remove(),2600); }
 
 /* ---- concrete formulieren ---- */
+function accTwin(a){ const n=String(a.name||'').trim().toLowerCase(); return S.accounts.some(b=>b.id!==a.id && String(b.name||'').trim().toLowerCase()===n); }
+function accTag(a){ if(!accTwin(a)) return ''; const e=a.type==='deposito'?endDateOf(a):null, c=currentOf(a.id);
+  return a.closed?'':e?'vrij '+dNl(e):a.start?'geopend '+dNl(a.start):c?'nu '+E(c.value):'nieuw'; }
+function accName(a){ const t=accTag(a); return a.name+(t?' ('+t+')':''); }
 function accountForm(a){
   const isNew=!a; a=a||{type:'spaar',besch:true,renteFreq:'maand',saldoDate:todayStr()};
   form({title:isNew?'Rekening toevoegen':'Rekening bewerken', values:{...a,inBox3:!a.noBox3}, fields:[
@@ -1143,6 +1147,9 @@ function accountForm(a){
     if(o.inleg>0 && (o.inleg>20000 || (curV>0 && o.inleg>=curV)) && window._inlegOk!==o.inleg){ window._inlegOk=o.inleg;
       return `Klopt de verwachte inleg van ${E(o.inleg)} per maand? Dat is ${curV>0&&o.inleg>=curV?'meer dan het hele saldo':'erg veel'}. Dit veld is voor het bedrag dat je elke maand bijstort, niet voor het saldo. Klik nogmaals op Opslaan als het toch klopt.`; }
     window._inlegOk=null;
+    { const n=String(o.name||'').trim().toLowerCase(), tw=S.accounts.filter(b=>(isNew||b.id!==a.id) && String(b.name||'').trim().toLowerCase()===n);
+      if(tw.length && window._dupOk!==n){ window._dupOk=n; return `Er ${tw.length===1?'is al een rekening':'zijn al '+tw.length+' rekeningen'} met de naam "${esc(o.name)}". Geef liever een herkenbare naam, bijvoorbeeld met de einddatum: "${esc(o.name)} tot apr 2027". Klik nogmaals op Opslaan om de naam toch te gebruiken.`; }
+      window._dupOk=null; }
     o.noBox3=!o.inBox3; delete o.inBox3;
     if(!isNew && a.closed && o.closed && o.closed!==a.closed){ const z=S.meas.find(m=>m.acc===a.id&&m.date===a.closed&&+m.value===0); if(z){ S.meas=S.meas.filter(m=>!(m.acc===a.id&&m.date===o.closed&&m!==z)); z.date=o.closed; } }
     if(isNew){
@@ -1157,7 +1164,7 @@ function accountForm(a){
 }
 function measForm(acc, m, defDate){
   const isNew=!m; const cur=currentOf(acc.id);
-  form({title:(isNew?'Saldo invoeren':'Meting bewerken')+' – '+acc.name, values:m||{date:defDate||todayStr()},
+  form({title:(isNew?'Saldo invoeren':'Meting bewerken')+' – '+accName(acc), values:m||{date:defDate||todayStr()},
     extra: cur?`<div class="info">Huidige waarde: <b>${E2(cur.value)}</b> (peildatum ${dNl(cur.date)})</div>`:'',
     fields:[
       {k:'value',label:TYPES[acc.type].waarde?'Actuele waarde (€)':'Saldo (€)',type:'num',req:true},
@@ -1349,8 +1356,12 @@ function todoItems(){
     if(!m){ T.push({ic:'💶',t:`Saldo invoeren: ${a.name}`,d:'Nog nooit een saldo ingevoerd; telt niet mee in je vermogen.',a:'meas',id:a.id}); continue; }
     if(a.type!=='deposito' && !(a.type==='goud'&&a.gram) && daysBetween(m.date,today)>45) T.push({ic:'💶',t:`Saldo bijwerken: ${a.name}`,d:`Laatst ingevoerd op ${dNl(m.date)}.`,a:'meas',id:a.id}); }
   for(const a of S.accounts){ if(a.closed) continue; const e=a.type==='lijfrente'?a.lfDepEnd:endDateOf(a); if(e && e>=today && daysBetween(today,e)<=60) T.push({ic:'📅',t:`${a.name} loopt af op ${dNl(e)}`,d:'Bedenk wat je met het geld doet en pas zo nodig de rekening aan.',h:'#rekeningen'}); }
-  for(let i=c-3;i<c;i++){ const ym=iYm(i); if(ym<showFrom()+'-01') continue; if(!S.actuals.some(x=>x.kind==='uit'&&x.date.slice(0,7)===ym&&!isInv(x))) T.push({ic:'🧾',t:`Uitgaven van ${mLong(ym)} invullen`,d:'Nog geen werkelijke uitgaven voor deze maand.',h:'#invoer',ym}); }
+  for(const [k,lbl,ic] of [['in','Inkomsten','💰'],['uit','Uitgaven','🧾']]){ const miss=[];
+    for(let i=ymI(showFrom()+'-01');i<c;i++){ const ym=iYm(i); if(!S.actuals.some(x=>x.kind===k&&x.date.slice(0,7)===ym&&!isInv(x))) miss.push(ym); }
+    if(miss.length===1) T.push({ic,t:`${lbl} van ${mLong(miss[0])} invullen`,d:`Nog geen werkelijke ${lbl.toLowerCase()} voor deze maand.`,h:'#invoer',ym:miss[0],kind:k});
+    else if(miss.length>1) T.push({ic,t:`${lbl} invullen voor ${miss.length} maanden`,d:`Nog leeg: ${miss.slice(0,6).map(mName).join(', ')}${miss.length>6?' enz.':''}. Klik om bij de eerste te beginnen; het Jaaroverzicht is handig om snel veel maanden te vullen.`,h:'#invoer',ym:miss[0],kind:k}); }
   if(!S.settings.hgMigrated && S.settings.hmap && Object.keys(S.settings.hmap).length){ const left=S.expCats.filter(cat=>groupOf('uit',cat,null)===NOGROUP); if(left.length) T.push({ic:'🗂️',t:`${left.length} categorie${left.length===1?'':'ën'} nog niet in een hoofdgroep`,d:left.slice(0,4).join(', ')+(left.length>4?'…':''),h:'#instellingen',sec:'hg'}); }
+  if(!S.settings.hgMigrated && S.settings.hmap && Object.keys(S.settings.hmap).length && !S.expCats.some(cat=>groupOf('uit',cat,null)===NOGROUP)) T.push({ic:'🗂️',t:'Overstappen op hoofdgroepen afronden',d:'Alles is ingedeeld. Klik op "Hoofdgroepen worden mijn categorieën"; daarna zie je bij Invoeren je hoofdgroepen in plaats van de oude categorieën.',h:'#instellingen',sec:'hg'});
   if(S.cpi && S.cpi.at && daysBetween(S.cpi.at,today)>40) T.push({ic:'📈',t:'CBS-cijfers zijn ouder dan een maand',d:'Open Analyse → Persoonlijke inflatie en klik op "Nu ophalen".',h:'#analyse',an:'inflatie'});
   for(const p of S.settings.people){ if(!personInfo(p).birth) T.push({ic:'👤',t:`Geboortedatum invullen voor ${p}`,d:'Nodig voor de AOW-datum en de planning.',h:'#instellingen',sec:'pers'}); }
   return T;
@@ -1363,7 +1374,7 @@ function todoCard(){
 function todoGo(i){ const x=todoItems()[+i]; if(!x) return;
   if(x.a==='meas'){ measForm(accById(x.id)); return; }
   if(x.a==='ldirGrant'){ ldirGrant(); return; }
-  if(x.ym){ gridYm=x.ym; invView='maand'; invKind='uit'; }
+  if(x.ym){ gridYm=x.ym; invView='maand'; invKind=x.kind||'uit'; invMode=null; }
   if(x.sec) setSec=x.sec; if(x.an) anSec=x.an;
   if(x.h){ if(location.hash===x.h) render(); else location.hash=x.h; window.scrollTo(0,0); }
 }
@@ -1405,7 +1416,7 @@ function goldCard(){
   const accs=goldAccs(); if(!accs.length) return '';
   const gp=S.settings.goldPrice||{}, price=gp.price;
   const rows=accs.map(a=>{ const g=+a.gram||0, pc=goldPctOf(a);
-    return `<tr><td>${esc(a.name)}</td><td class="n">${g?numIn(g)+' g':'<span class="muted">geen gewicht</span>'}</td><td class="n">${numIn(pc)}%</td><td class="n">${g&&price?E2(g*price*pc/100):'–'}</td><td class="n"><button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Wijzig</button></td></tr>`; }).join('');
+    return `<tr><td>${esc(accName(a))}</td><td class="n">${g?numIn(g)+' g':'<span class="muted">geen gewicht</span>'}</td><td class="n">${numIn(pc)}%</td><td class="n">${g&&price?E2(g*price*pc/100):'–'}</td><td class="n"><button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Wijzig</button></td></tr>`; }).join('');
   return `<div class="card"><h2>Goudprijs 24 karaat</h2>
     <p class="small muted" style="margin-top:-4px">Open goudonline.nl, neem de actuele prijs per gram over en klik op "Waarde bijwerken". De app berekent per goudrekening gewicht × goudprijs × percentage en slaat dat op als saldo van vandaag.</p>
     <div class="row" style="align-items:flex-end;gap:10px">
@@ -1716,7 +1727,7 @@ function vVrij(){
   const chart=lineChart({labels,series:[{name:'Verwacht vrij opneembaar tegoed (eind van de maand)',values:rows.map(r=>r.end),color:'#1d5fbf'}],h:260});
   const evRows=rows.filter(r=>r.events.length);
   const depRows=nonBesch.map(a=>{ const mt=maturityOf(a), cur=currentOf(a.id);
-    return `<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}</div></td><td class="n">${cur?E(cur.value):'–'}</td><td>${endDateOf(a)?dNl(endDateOf(a))+(endDateOf(a)<=todayStr()?' <span class="badge w">verlopen</span>':'')+(!a.endDate?'<div class="small muted">uit looptijd in de naam + openingsdatum</div>':''):`<span class="muted">geen einddatum</span>${/(\d+)\s*(jaar|maand|mnd)/i.test(a.name)&&!a.start?'<div class="small muted">vul "Geopend op" in, dan rekent de app de einddatum uit</div>':''}`}</td><td class="n">${mt&&mt.amount!=null?E(mt.amount)+(mt.est?' <span class="small muted">(schatting)</span>':''):'–'}</td><td class="n"><button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Wijzig</button></td></tr>`; }).join('');
+    return `<tr><td>${esc(accName(a))}<div class="small muted">${esc(TYPES[a.type].label)}</div></td><td class="n">${cur?E(cur.value):'–'}</td><td>${endDateOf(a)?dNl(endDateOf(a))+(endDateOf(a)<=todayStr()?' <span class="badge w">verlopen</span>':'')+(!a.endDate?'<div class="small muted">uit looptijd in de naam + openingsdatum</div>':''):`<span class="muted">geen einddatum</span>${/(\d+)\s*(jaar|maand|mnd)/i.test(a.name)&&!a.start?'<div class="small muted">vul "Geopend op" in, dan rekent de app de einddatum uit</div>':''}`}</td><td class="n">${mt&&mt.amount!=null?E(mt.amount)+(mt.est?' <span class="small muted">(schatting)</span>':''):'–'}</td><td class="n"><button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Wijzig</button></td></tr>`; }).join('');
   return `<div class="row"><div><h1>Vrij geld</h1><p class="sub">Wanneer komt vastgezet geld vrij, en hoeveel kun je op elk moment vrij opnemen?</p></div></div>${demoBanner()}
   <div class="grid g3">
     <div class="tile"><div class="lbl">Nu vrij opneembaar</div><div class="val">${E(pl.start)}</div><div class="note">rekeningen met "direct beschikbaar"</div></div>
@@ -1806,7 +1817,7 @@ function restoreModal(){
       const F=Object.values(found);
       if(!F.length){ out.innerHTML=`<p>${scanned?`In ${scanned} versies (tot ${esc(new Date(lastDate).toLocaleDateString('nl-NL'))}) staan geen rekeningen die nu ontbreken. Probeer een eerdere datum.`:'Geen oudere versies gevonden op of vóór die datum.'}</p>`; return; }
       out.innerHTML='<p>Deze rekeningen ontbreken nu, maar staan in een oudere versie:</p>'+F.map(({a,st,date})=>{ const n=(st.meas||[]).filter(m=>m.acc===a.id).length;
-        return `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><div><b>${esc(a.name)}</b><div class="muted">${esc((TYPES[a.type]||{}).label||a.type)} · ${n} saldo${n===1?'':"'s"} · versie van ${esc(new Date(date).toLocaleString('nl-NL'))}</div></div><span class="spacer"></span><button class="btn sm rsAcc" data-id="${esc(a.id)}">Terughalen</button></div>`; }).join('');
+        return `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><div><b>${esc(accName(a))}</b><div class="muted">${esc((TYPES[a.type]||{}).label||a.type)} · ${n} saldo${n===1?'':"'s"} · versie van ${esc(new Date(date).toLocaleString('nl-NL'))}</div></div><span class="spacer"></span><button class="btn sm rsAcc" data-id="${esc(a.id)}">Terughalen</button></div>`; }).join('');
       out.querySelectorAll('.rsAcc').forEach(b=>b.onclick=()=>{ const id=b.dataset.id, f=found[id]; if(!f||accById(id)) return; const old=f.st;
         S.accounts.push(f.a);
         for(const k of ['meas','flows','interest']){ S[k] ||= []; const cur=new Set(S[k].map(x=>x.id)); for(const x of (old[k]||[])) if(x.acc===id && !cur.has(x.id)) S[k].push(x); }
@@ -1831,11 +1842,11 @@ function accMonthCard(){
     return `<td class="n" ${old?`title="Geen saldo in ${mLong(ym)}: het laatst bekende saldo (${dNl(m.date)}) is gebruikt. Klik op de datum om een saldo in te voeren."`:`title="Saldo van ${dNl(m.date)}"`}>${E(m.value)}<div class="small ${old?'':'muted'}" style="${old?'color:#b26b00':''}">${old?`<button class="btn ghost sm" data-a="meas" data-id="${a.id}" data-date="${ld}" style="padding:0;color:#b26b00">${sd(m.date)} ✎</button>`:sd(m.date)}</div></td>`; };
   const stickL='position:sticky;left:0;background:#f3f6fa;z-index:1;text-align:left;min-width:170px;max-width:220px;white-space:normal';
   const head=`<tr><th style="position:sticky;left:0;top:0;z-index:3;background:#eef3fa;text-align:left">Rekening</th>${months.map(ym=>`<th class="n" style="position:sticky;top:0;z-index:2;background:#eef3fa;white-space:nowrap;min-width:92px${ym.endsWith('-01')?';border-left:2px solid #c9d6e8':''}">${MN[+ym.slice(5)-1]} ${ym.slice(2,4)}</th>`).join('')}</tr>`;
-  const body=accs.map(a=>`<tr><th style="${stickL}"><label style="cursor:pointer;display:flex;gap:6px;align-items:flex-start;font-weight:600;text-transform:none;letter-spacing:0" title="Vinkje weghalen: rekening verbergen in dit overzicht"><input type="checkbox" class="amacc" data-id="${a.id}" checked style="margin-top:3px"> <span>${esc(a.name)}${a.closed?'<div class="small muted" style="font-weight:400">gesloten</div>':''}</span></label></th>${months.map((ym,mi)=>cell(a,ym,mi)).join('')}</tr>`).join('');
+  const body=accs.map(a=>`<tr><th style="${stickL}"><label style="cursor:pointer;display:flex;gap:6px;align-items:flex-start;font-weight:600;text-transform:none;letter-spacing:0" title="Vinkje weghalen: rekening verbergen in dit overzicht"><input type="checkbox" class="amacc" data-id="${a.id}" checked style="margin-top:3px"> <span>${esc(accName(a))}${a.closed?'<div class="small muted" style="font-weight:400">gesloten</div>':''}</span></label></th>${months.map((ym,mi)=>cell(a,ym,mi)).join('')}</tr>`).join('');
   const foot=`<tr class="tot"><th style="${stickL};background:#eef3fa">Totaal${hidden.length?'<div class="small" style="color:#b26b00;font-weight:400">zonder verborgen</div>':''}</th>${months.map((ym,mi)=>`<td class="n"><b>${E(tot[mi])}</b>${miss[mi]?`<div class="small" style="color:#c0392b">${miss[mi]} onbekend</div>`:''}</td>`).join('')}</tr>`;
   return `<details class="card" style="margin-top:14px" ${window._amOpen?'open':''} ontoggle="window._amOpen=this.open;if(this.open){const w=this.querySelector('.amwrap');if(w)w.scrollLeft=window._amSL??w.scrollWidth;}"><summary style="cursor:pointer;font-weight:700">Vermogen per maand, per rekening</summary>
   <p class="small muted">De stand aan het eind van elke maand en de datum van het saldo dat daarvoor is gebruikt: het laatste saldo tot en met de 1e van de volgende maand. <span style="color:#b26b00">Oranje datum</span> = geen saldo in die maand, het laatst bekende saldo is gebruikt (klik om een saldo in te voeren; bij deposito's is dat normaal, want het bedrag staat vast). Haal je bij een rekening het vinkje weg, dan verdwijnt die rekening uit dit overzicht en telt ze niet mee in het totaal; met de knop "+ naam" boven de tabel haal je haar terug. De rest van de app verandert daar niet door. <span style="color:var(--neg)">Onbekend</span> = nog nooit een saldo ingevoerd; telt niet mee in het totaal.</p>
-  ${hidden.length?`<div class="row" style="gap:6px;flex-wrap:wrap;margin:0 0 10px"><span class="small muted">Verborgen (telt niet mee):</span>${hidden.map(a=>`<button class="btn sec sm" data-a="amShow" data-id="${a.id}" title="Weer tonen">+ ${esc(a.name)}</button>`).join('')}${hidden.length>1?'<button class="btn ghost sm" data-a="amShowAll">Alles tonen</button>':''}</div>`:''}
+  ${hidden.length?`<div class="row" style="gap:6px;flex-wrap:wrap;margin:0 0 10px"><span class="small muted">Verborgen (telt niet mee):</span>${hidden.map(a=>`<button class="btn sec sm" data-a="amShow" data-id="${a.id}" title="Weer tonen">+ ${esc(accName(a))}</button>`).join('')}${hidden.length>1?'<button class="btn ghost sm" data-a="amShowAll">Alles tonen</button>':''}</div>`:''}
   <div class="tablewrap amwrap" style="max-height:75vh;overflow:auto"><table class="amtab" style="border-collapse:separate;border-spacing:0">${head}${body}${foot}</table></div></details>`;
 }
 /* ============ Hoofdgroepen (zelf in te delen) ============
@@ -2096,6 +2107,15 @@ function lfBlock(a){
     <details style="margin-top:8px"><summary class="small" style="cursor:pointer">Uitkeringsschema per jaar</summary><table class="small" style="margin-top:6px"><tr><th>Jaar</th><th class="n">Uitkering bruto</th><th class="n">Netto</th><th class="n">Rente</th><th class="n">Restant</th></tr>${rows.map(r=>`<tr><td>${r.y}</td><td class="n">${E(r.uit)}</td><td class="n">${E(r.net)}</td><td class="n">${E(r.rente)}</td><td class="n">${E(r.rest)}</td></tr>`).join('')}</table>
     <p class="small muted">Uitkering ${mLong(c.startYm)} t/m ${mLong(c.endYm)}, bij ${esc(c.person)} als inkomen "Lijfrente" in de planning. Schatting met de tarieven van ${LF_TAX.year}; pas belasting of zorgbijdrage aan bij Bewerken.</p></details></div>`;
 }
+function histRows(a,ms,fl,ints,rts){
+  const del=(act,id,extra='')=>`<button class="btn ghost sm" data-a="${act}" data-id="${id}" ${extra}>✕</button>`;
+  const R=[...ms.map(m=>({d:m.date,o:2,h:`<td><span class="badge">Saldo</span></td><td class="n">${E2(m.value)}</td><td class="n" style="white-space:nowrap"><button class="btn ghost sm" data-a="editMeas" data-id="${m.id}">Bewerk</button>${del('delMeas',m.id)}</td>`})),
+    ...fl.map(f=>({d:f.date,o:1,h:`<td><span class="badge ${f.amount>0?'g':'w'}">${f.amount>0?'Aankoop':'Verkoop'}</span>${f.note?` <span class="small muted">${esc(f.note)}</span>`:''}</td><td class="n" style="color:${f.amount>0?'var(--ok)':'var(--bad)'}">${f.amount>0?'+':'−'}${E2(Math.abs(f.amount))}</td><td class="n">${del('delFlow',f.id)}</td>`})),
+    ...ints.map(x=>({d:x.date,o:1,h:`<td><span class="badge g">Rente ontvangen</span>${x.note?` <span class="small muted">${esc(x.note)}</span>`:''}</td><td class="n">${E2(x.amount)}</td><td class="n">${del('delInt',x.id)}</td>`})),
+    ...rts.map(r=>({d:r.from,o:0,h:`<td><span class="badge">Rentewijziging</span></td><td class="n">${numIn(r.pct)}%</td><td class="n">${del('delRate',r.id,`data-acc="${a.id}"`)}</td>`}))];
+  R.sort((x,y)=>x.d<y.d?1:x.d>y.d?-1:y.o-x.o);
+  return R.map(r=>`<tr><td style="white-space:nowrap">${dNl(r.d)}</td>${r.h}</tr>`).join('')+(rts.length?`<tr><td class="muted">start</td><td class="muted">Rente bij opening</td><td class="n muted">${numIn(a.rente||0)}%</td><td></td></tr>`:'');
+}
 function vRekeningen(){
   const st=monthStatus(curYm());
   const cardOf=a=>{
@@ -2103,15 +2123,12 @@ function vRekeningen(){
     const fl=S.flows.filter(f=>f.acc===a.id).sort((x,y)=>x.date<y.date?1:-1);
     const rts=(a.rates||[]).slice().sort((x,y)=>x.from<y.from?1:-1), ints=S.interest.filter(x=>x.acc===a.id).sort((x,y)=>x.date<y.date?1:-1);
     const fc=hasRate(a)&&!isLijf(a)?savingsForecast(a):null;
-    return `<div class="card acard${openHist[a.id]?' wide':''}"><div class="acc"><div><div class="nm">${esc(a.name)}${a.closed?` <span class="badge w">gesloten ${dNl(a.closed)}</span>`:''}</div><div class="row small muted" style="gap:6px;margin-top:3px"><span class="badge">${esc(t.label)}</span>${isLijf(a)?'<span class="badge d">geblokkeerd · box 1</span>':a.besch?'<span class="badge g">direct beschikbaar</span>':'<span class="badge d">vastgezet / niet direct</span>'}${hasRate(a)?`<span>${numIn(rateAt(a,todayStr()))}% rente · ${endOnly(a)?'rente op de einddatum':esc(RFREQ[a.renteFreq]||'')}${a.renteDag?' · '+esc(payoutLabel(a)):''}${a.inleg?' · inleg '+E(a.inleg)+' p/m':''}</span>`:''}</div></div>
+    return `<div class="card acard${openHist[a.id]?' wide':''}"><div class="acc"><div><div class="nm">${esc(accName(a))}${a.closed?` <span class="badge w">gesloten ${dNl(a.closed)}</span>`:''}</div><div class="row small muted" style="gap:6px;margin-top:3px"><span class="badge">${esc(t.label)}</span>${isLijf(a)?'<span class="badge d">geblokkeerd · box 1</span>':a.besch?'<span class="badge g">direct beschikbaar</span>':'<span class="badge d">vastgezet / niet direct</span>'}${hasRate(a)?`<span>${numIn(rateAt(a,todayStr()))}% rente · ${endOnly(a)?'rente op de einddatum':esc(RFREQ[a.renteFreq]||'')}${a.renteDag?' · '+esc(payoutLabel(a)):''}${a.inleg?' · inleg '+E(a.inleg)+' p/m':''}</span>`:''}</div></div>
       <div><div class="v">${cur?E2(cur.value):'<span class="muted" style="font-size:16px">onbekend</span>'}</div><div class="small muted" style="text-align:right">${cur?'peildatum '+dNl(cur.date):'nog geen meting'}</div></div></div>
       ${isLijf(a)?lfBlock(a):a.type==='deposito'&&hasRate(a)&&cur?depositLine(a,cur):fc?`<div class="small muted" style="margin-top:8px">Verwachte rente komende 12 maanden: <b>${E(fc.int12)}</b> · verwacht saldo over 12 maanden: <b>${E(fc.rows[11].bal)}</b></div>`:''}
       ${a.type==='goud'?goldBlock(a):''}
-      <div class="row" style="margin-top:12px"><button class="btn sm" data-a="meas" data-id="${a.id}">Saldo invoeren</button>${t.waarde?`<button class="btn sec sm" data-a="flow" data-id="${a.id}">Aankoop / verkoop</button>`:''}${t.rente?`<button class="btn sec sm" data-a="rate" data-id="${a.id}">Rentewijziging</button><button class="btn sec sm" data-a="intr" data-id="${a.id}">Ontvangen rente</button>`:''}<button class="btn ghost sm" data-a="hist" data-id="${a.id}">${openHist[a.id]?'Verberg':'Toon'} geschiedenis (${ms.length})</button><span class="spacer"></span>${attBtn(a)}<button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Bewerken</button>${a.closed?`<button class="btn ghost sm" data-a="reopenAcc" data-id="${a.id}">Heropenen</button>`:`<button class="btn ghost sm" data-a="closeAcc" data-id="${a.id}">Sluiten</button>`}<button class="btn ghost sm" data-a="delAcc" data-id="${a.id}">Verwijderen</button></div>
-      ${openHist[a.id]?`<div class="tablewrap" style="margin-top:10px"><table><tr><th>Peildatum</th><th class="n">Waarde</th><th></th></tr>${ms.map(m=>`<tr><td>${dNl(m.date)}</td><td class="n">${E2(m.value)}</td><td class="n"><button class="btn ghost sm" data-a="editMeas" data-id="${m.id}">Bewerk</button><button class="btn ghost sm" data-a="delMeas" data-id="${m.id}">✕</button></td></tr>`).join('')}</table>
-        ${rts.length?`<h2 style="margin-top:14px;font-size:14px">Rentewijzigingen</h2><table>${rts.map(r=>`<tr><td>vanaf ${dNl(r.from)}</td><td class="n">${numIn(r.pct)}%</td><td class="n"><button class="btn ghost sm" data-a="delRate" data-acc="${a.id}" data-id="${r.id}">✕</button></td></tr>`).join('')}<tr><td class="muted">daarvoor (start)</td><td class="n muted">${numIn(a.rente||0)}%</td><td></td></tr></table>`:''}
-        ${ints.length?`<h2 style="margin-top:14px;font-size:14px">Ontvangen rente</h2><table>${ints.map(x=>`<tr><td>${dNl(x.date)}</td><td>${esc(x.note||'')}</td><td class="n">${E2(x.amount)}</td><td class="n"><button class="btn ghost sm" data-a="delInt" data-id="${x.id}">✕</button></td></tr>`).join('')}</table>`:''}
-        ${fl.length?`<h2 style="margin-top:14px;font-size:14px">Aankopen en verkopen</h2><table>${fl.map(f=>`<tr><td>${dNl(f.date)}</td><td>${esc(f.note||'')}</td><td class="n">${f.amount>0?'+':''}${E2(f.amount)}</td><td class="n"><button class="btn ghost sm" data-a="delFlow" data-id="${f.id}">✕</button></td></tr>`).join('')}</table>`:''}</div>`:''}
+      <div class="row" style="margin-top:12px"><button class="btn sm" data-a="meas" data-id="${a.id}">Saldo invoeren</button>${t.waarde?`<button class="btn sec sm" data-a="flow" data-id="${a.id}">Aankoop / verkoop</button>`:''}${t.rente?`<button class="btn sec sm" data-a="rate" data-id="${a.id}">Rentewijziging</button><button class="btn sec sm" data-a="intr" data-id="${a.id}">Ontvangen rente</button>`:''}<button class="btn ghost sm" data-a="hist" data-id="${a.id}">${openHist[a.id]?'Verberg':'Toon'} geschiedenis (${ms.length+fl.length+ints.length+rts.length})</button><span class="spacer"></span>${attBtn(a)}<button class="btn ghost sm" data-a="editAcc" data-id="${a.id}">Bewerken</button>${a.closed?`<button class="btn ghost sm" data-a="reopenAcc" data-id="${a.id}">Heropenen</button>`:`<button class="btn ghost sm" data-a="closeAcc" data-id="${a.id}">Sluiten</button>`}<button class="btn ghost sm" data-a="delAcc" data-id="${a.id}">Verwijderen</button></div>
+      ${openHist[a.id]?`<div class="tablewrap" style="margin-top:10px"><table><tr><th>Datum</th><th>Wat</th><th class="n">Bedrag</th><th></th></tr>${histRows(a,ms,fl,ints,rts)}</table></div>`:''}
     </div>`;
   };
   const OA=openAccs(), CL=S.accounts.filter(a=>a.closed).sort((a,b)=>a.closed<b.closed?1:-1);
@@ -2658,7 +2675,7 @@ function expRendCard(){
   // twee kolommen per jaar: bedrag (altijd precies onder elkaar) en een hulpkolom (gem. saldo of %)
   const A=(html,cls='')=>`<td class="n amt ${cls}">${html}</td>`, X=(html='')=>`<td class="n aux">${html}</td>`;
   const pct=(v,i,sign='')=>pBase(i)&&Math.abs(v)>=1?sign+P(Math.abs(v)/pBase(i)):'';
-  const rows=ordered.map(a=>`<tr><td><a href="#rendement" data-a="editAcc" data-id="${a.id}" title="Rentepercentage of verwacht rendement instellen" style="color:inherit;font-weight:600;text-decoration:none">${esc(a.name)} ✎</a> ${badge(a)} <span class="small muted">· ${accInfo(a)}</span></td>${yrs.map((y,i)=>{ const v=per[a.id]?per[a.id][i]:0, ab=avgBal(a.id,i);
+  const rows=ordered.map(a=>`<tr><td><a href="#rendement" data-a="editAcc" data-id="${a.id}" title="Rentepercentage of verwacht rendement instellen" style="color:inherit;font-weight:600;text-decoration:none">${esc(accName(a))} ✎</a> ${badge(a)} <span class="small muted">· ${accInfo(a)}</span></td>${yrs.map((y,i)=>{ const v=per[a.id]?per[a.id][i]:0, ab=avgBal(a.id,i);
       return A(v>=1?'<b>'+E(v)+'</b>':'<span class="muted">–</span>')+X(ab>=1&&(hasRate(a)||TYPES[a.type].waarde)?`<span title="Gemiddeld verwacht saldo in ${y}">${E(ab)}</span>`:''); }).join('')}</tr>`).join('');
   const sumRow=(label,vals,{cls='',sign='',neg=false,title='',tips=null}={})=>`<tr class="${cls}" ${title?`title="${esc(title)}"`:''}><td>${label}</td>${vals.map((v,i)=>(tips&&tips[i]?`<td class="n amt ${neg?'neg':''}" title="${esc(tips[i])}" style="cursor:help;text-decoration:underline dotted">${Math.abs(v)>=1?(v<0||neg?'−':sign)+E(Math.abs(v)):'–'}</td>`:A(Math.abs(v)>=1?(v<0||neg?'−':sign)+E(Math.abs(v)):'–',neg?'neg':(sign==='+'?(v<0?'neg':'pos'):'')))+X(pct(v,i,neg||v<0?'−':(sign==='+'?'+':'')))).join('')}</tr>`;
   const rS_=numIn(Math.round(rS*100)/100);
@@ -2753,7 +2770,7 @@ function box3Card(){
   const pc=x=>numIn(Math.round(x*100)/100)+'%';
   return `<div class="card"><h2>Vermogensbelasting (box 3)</h2><p class="small muted">Een schatting op basis van je saldi op 1 januari (de peildatum). Spaargeld = betaal-, spaar- en depositorekeningen en contant geld; overige bezittingen = aandelen, goud, crypto en overig. Je eigen huis en je hypotheek vallen in box 1 en tellen hier niet mee. ${(S.settings.box3Partner??(S.settings.people.length>=2))?'Gerekend als fiscale partners.':'Gerekend zonder fiscale partner.'} De echte bedragen staan in je aangifte.</p>
   <div style="margin:0 0 12px"><div class="small" style="font-weight:600;margin-bottom:4px">Welke rekeningen tellen mee? <span class="muted" style="font-weight:400">Vinkje aan = telt mee, vinkje uit = telt niet mee.</span></div>
-  <div style="display:flex;flex-wrap:wrap;gap:6px 18px">${openAccs().map(a=>`<label class="small" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" class="b3acc" data-id="${a.id}" ${a.noBox3?'':'checked'}> ${esc(a.name)} <span class="muted">(${b3Cat(a)==='sp'?'spaargeld':'overige bezitting'})</span></label>`).join('')}</div></div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px 18px">${openAccs().map(a=>`<label class="small" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" class="b3acc" data-id="${a.id}" ${a.noBox3?'':'checked'}> ${esc(accName(a))} <span class="muted">(${b3Cat(a)==='sp'?'spaargeld':'overige bezitting'})</span></label>`).join('')}</div></div>
   <div class="tablewrap"><table>
   <tr><th></th>${R.map(r=>`<th class="n">${r.y}${r.y===cy+1?' (schatting)':''}<div class="small muted" style="font-weight:400;text-transform:none">aangifte in ${r.y+1}</div></th>`).join('')}</tr>
   ${row('Spaargeld op 1 januari',r=>E(r.v.sp))}
@@ -2781,7 +2798,7 @@ function vRendement(){
   ${forecastCard()}
   ${box3Card()}
   <div class="card"><h2>Rendement tot nu, per jaar</h2><div class="tablewrap"><table><tr><th>Rekening</th>${ys.map(y=>`<th class="n">${y}</th>`).join('')}</tr>
-    ${S.accounts.map(a=>`<tr><td>${esc(a.name)}<div class="small muted">${esc(TYPES[a.type].label)}${a.closed?' · gesloten '+dNl(a.closed):''}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
+    ${S.accounts.map(a=>`<tr><td>${esc(accName(a))}<div class="small muted">${esc(TYPES[a.type].label)}${a.closed?' · gesloten '+dNl(a.closed):''}</div></td>${ys.map(y=>`<td class="n">${cell(yearRend(a,y))}</td>`).join('')}</tr>`).join('')}
     <tr class="tot"><td>Totaal vermogen</td>${ys.map(y=>`<td class="n">${cell(totalRend(y))}</td>`).join('')}</tr></table></div></div>
   ${S.histRend.some(h=>+h.year>=showFrom())?`<div class="card"><h2>Handmatig ingevoerd</h2><table><tr><th>Jaar</th><th>Rekening</th><th class="n">Rendement</th><th></th></tr>${S.histRend.filter(h=>+h.year>=showFrom()).sort((a,b)=>b.year-a.year).map(h=>`<tr><td>${h.year}</td><td>${h.acc?esc(accById(h.acc)?.name||'(verwijderd)'):'Totaal vermogen'}</td><td class="n">${numIn(h.pct)}%</td><td class="n"><button class="btn ghost sm" data-a="delHR" data-id="${h.id}">✕</button></td></tr>`).join('')}</table></div>`:''}`;
 }
@@ -2792,7 +2809,7 @@ function savingsBlock(){
   return `<div class="card"><h2>Vooruitblik renterekeningen: komende 24 maanden</h2>
   <p class="small muted">Start bij het laatst ingevoerde saldo. Per maand komt de verwachte inleg erbij, en de rente wordt bijgeschreven volgens de uitkeringsfrequentie. Rente die al is bijgeschreven levert dan zelf ook rente op. Geplande rentewijzigingen tellen mee vanaf hun ingangsdatum. Bij uitkering per kwartaal of per jaar rekent de app met de maand van de uitkeringsdatum (zonder datum: december).</p>
   <div class="tablewrap"><table><tr><th>Rekening</th><th class="n">Saldo nu</th><th class="n">Inleg p/m</th><th class="n">Rente nu</th><th class="n">Rente komende 12 mnd</th><th class="n">Saldo over 12 mnd</th><th class="n">Saldo over 24 mnd</th></tr>
-  ${accs.map(({a,fc})=>`<tr><td>${esc(a.name)}<div class="small muted">saldo van ${dNl(fc.start.date)}</div></td><td class="n">${E(fc.start.value)}</td><td class="n">${a.inleg?E(a.inleg):'–'}</td><td class="n">${numIn(rateAt(a,todayStr()))}%</td><td class="n"><b>${E(fc.int12)}</b></td><td class="n">${E(fc.rows[11].bal)}</td><td class="n">${E(fc.rows[23].bal)}</td></tr>`).join('')}</table></div>
+  ${accs.map(({a,fc})=>`<tr><td>${esc(accName(a))}<div class="small muted">saldo van ${dNl(fc.start.date)}</div></td><td class="n">${E(fc.start.value)}</td><td class="n">${a.inleg?E(a.inleg):'–'}</td><td class="n">${numIn(rateAt(a,todayStr()))}%</td><td class="n"><b>${E(fc.int12)}</b></td><td class="n">${E(fc.rows[11].bal)}</td><td class="n">${E(fc.rows[23].bal)}</td></tr>`).join('')}</table></div>
   ${lineChart({labels,series:accs.map(({a,fc},i)=>({name:a.name,values:fc.rows.map(r=>r.bal),color:COLORS[i%COLORS.length]})),h:220})}</div>`;
 }
 function vPrognose(){
