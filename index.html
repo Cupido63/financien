@@ -1723,6 +1723,7 @@ function groupData(kind,d){
 }
 /* Instellingen: hoofdgroepen links, nog niet ingedeelde categorieën en subcategorieën rechts */
 function hgEditor(){
+  if(S.settings.hgMigrated && hgKind==='uit') hgKind='in';
   const kind=hgKind, list=hgList(kind), M=hgMap(); if(!hgSel||!list.some(g=>g.id===hgSel)) hgSel=list[0]&&list[0].id;
   const cats=kind==='uit'?S.expCats:S.incCats, subsOf=c=>kind==='uit'?(S.subCats[c]||[]):(S.settings.people||[]).concat('Samen');
   const itemsOf=id=>{ const r=[]; for(const c of cats){ if(M[kind+'|'+c]===id) r.push({key:kind+'|'+c,label:c}); if(kind==='uit') for(const s of subsOf(c)) if(M[kind+'|'+c+'|'+s]===id) r.push({key:kind+'|'+c+'|'+s,label:c+' › '+s}); } return r; };
@@ -1734,13 +1735,65 @@ function hgEditor(){
   const rest=[]; for(const c of cats){ if(M[kind+'|'+c]) continue; const subs=kind==='uit'?subsOf(c).filter(s=>!M[kind+'|'+c+'|'+s]):[];
     rest.push(`<div style="margin:6px 0"><label style="font-weight:600;cursor:pointer"><input type="checkbox" class="hgpick" data-k="${esc(kind+'|'+c)}"> ${esc(c)}${subs.length?' <span class="small muted">(hele categorie)</span>':''}</label>${subs.length?`<div style="padding-left:24px">${subs.map(s=>`<label class="small" style="display:inline-flex;gap:4px;margin:2px 12px 2px 0;cursor:pointer"><input type="checkbox" class="hgpick" data-k="${esc(kind+'|'+c+'|'+s)}"> ${esc(s)}</label>`).join('')}</div>`:''}</div>`); }
   const selName=hgName(kind,hgSel)||'';
-  return `<div class="card" id="hgCard"><div class="row"><h2 style="margin:0">Hoofdgroepen</h2><span class="spacer"></span><div class="toggle"><button data-a="hgKind" data-v="uit" class="${kind==='uit'?'on':''}">Uitgaven</button><button data-a="hgKind" data-v="in" class="${kind==='in'?'on':''}">Inkomsten</button></div></div>
+  return `<div class="card" id="hgCard"><div class="row"><h2 style="margin:0">Hoofdgroepen</h2><span class="spacer"></span><div class="toggle">${S.settings.hgMigrated?'':`<button data-a="hgKind" data-v="uit" class="${kind==='uit'?'on':''}">Uitgaven</button>`}<button data-a="hgKind" data-v="in" class="${kind==='in'?'on':''}">Inkomsten</button></div></div>
   <p class="small muted">Kies links een hoofdgroep en vink rechts aan wat erbij hoort. Wat je aanvinkt verdwijnt rechts, zodat je ziet wat nog over is. Een subcategorie kun je in een andere hoofdgroep zetten dan de rest van de categorie. Niet ingedeeld komt bij Analyse onder "${NOGROUP}".</p>
   <div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start">
     <div>${left}<div class="row" style="margin-top:8px"><input id="hgNew" placeholder="Nieuwe hoofdgroep" style="flex:1"><button class="btn sm" data-a="hgAdd">+ Toevoegen</button></div></div>
     <div class="catbox" style="background:#f7f9fc"><div style="font-weight:700;margin-bottom:4px">Nog niet ingedeeld ${rest.length?`<span class="small muted">→ klik aan voor <b>${esc(selName)}</b></span>`:''}</div>${rest.join('')||'<p class="small muted">Alles is ingedeeld. 👍</p>'}
       <div class="row" style="margin-top:10px;gap:8px"><button class="btn ghost sm" data-a="hgAuto">Voorstel van de app invullen</button><button class="btn ghost sm" data-a="hgClear">Alles leegmaken</button></div></div>
-  </div></div>`;
+  </div>
+  ${kind==='uit'?`<div class="info" style="margin-top:14px"><b>Overstappen op hoofdgroepen.</b> Als alles is ingedeeld, worden je hoofdgroepen je uitgavencategorieën, ook bij Invoeren. Je oude categorieën worden subcategorieën, bijv. Wonen › Energie. Bedragen, investeringen en de koppeling met het CBS gaan mee. Dit is eenmalig; GitHub bewaart je huidige versie.<div style="margin-top:8px"><button class="btn sm" data-a="hgMigrate" ${rest.length?'disabled title="Deel eerst alles in"':''}>Hoofdgroepen worden mijn categorieën</button>${rest.length?` <span class="small muted">Nog ${rest.length} categorie${rest.length===1?'':'ën'} in te delen.</span>`:''}</div></div>`:`${S.settings.hgMigrated?'<p class="small muted" style="margin-top:10px">Je uitgaven werken al met hoofdgroepen als categorieën (zie Uitgavencategorieën hierboven). Hier deel je alleen je inkomsten in.</p>':''}`}
+  </div>`;
+}
+/* Eenmalige omzetting: de hoofdgroepen worden de uitgavencategorieën; oude categorieën worden subcategorieën */
+function hgLeft(kind){ const M=hgMap(); const cats=kind==='uit'?S.expCats:S.incCats; const r=[];
+  for(const c of cats){ if(M[kind+'|'+c]) continue; const subs=(S.subCats[c]||[]).filter(s=>!M[kind+'|'+c+'|'+s]); if(!(S.subCats[c]||[]).length||subs.length||!S.actuals.every(a=>a.cat!==c||a.sub)) r.push(c); } return r; }
+function hgMigrate(){
+  const left=hgLeft('uit'); if(left.length){ toast('Deel eerst alles in. Nog over: '+left.join(', ')); return; }
+  const groups=hgList('uit').map(g=>g.name), newSub=(c,s)=>s?s:(groups.includes(c)?'':c);
+  const before=new Map(S.actuals.map(a=>[a,isInv(a)]));
+  const oldNoInv=new Set(S.settings.noInvCats||[]);
+  const conv=x=>{ if(x.kind!=='uit'||!x.cat||x.cat===UNDIST||x.cat===AFS) return; const g=groupOf('uit',x.cat,x.sub||null); if(g===NOGROUP) return; x.sub=newSub(x.cat,x.sub||''); x.cat=g; };
+  // CPI-koppelingen meenemen
+  const CM=S.cpiMap||{}, NM={};
+  for(const [k,v] of Object.entries(CM)){ if(k.startsWith('inv:')){ const c=k.slice(4), g=groupOf('uit',c,null); if(g!==NOGROUP&&!NM['inv:'+g]) NM['inv:'+g]=v; continue; }
+    const [c,s]=k.split('|'); const g=groupOf('uit',c,s||null); if(g===NOGROUP) continue; const ns=newSub(c,s||''); NM[ns?g+'|'+ns:g]=v; }
+  // noInv per hoofdgroep: alleen als alle oude categorieën erin "nooit investering" waren
+  const gCats={}; for(const c of S.expCats){ for(const s of [null,...(S.subCats[c]||[])]){ const g=groupOf('uit',c,s); (gCats[g] ||= new Set()).add(c); } }
+  const newNoInv=groups.filter(g=>gCats[g]&&[...gCats[g]].every(c=>oldNoInv.has(c)));
+  // nieuwe subcategorieën per hoofdgroep (in de volgorde van de oude categorieën)
+  const subs={}; for(const g of groups) subs[g]=[];
+  for(const c of S.expCats){ const cs=S.subCats[c]||[];
+    for(const s of cs){ const g=groupOf('uit',c,s); if(subs[g] && !subs[g].includes(s)) subs[g].push(s); }
+    const g=groupOf('uit',c,null), ns=newSub(c,''); if(subs[g] && ns && (!cs.length || S.actuals.some(a=>a.cat===c&&!a.sub) || S.recurring.some(r=>r.cat===c) || S.expected.some(e=>e.cat===c)) && !subs[g].includes(ns)) subs[g].push(ns); }
+  for(const x of S.actuals) conv(x); for(const x of S.recurring) conv(x); for(const x of S.expected) conv(x);
+  S.expCats=groups.slice(); S.subCats=Object.assign({},Object.fromEntries(Object.entries(S.subCats).filter(([c])=>S.incCats.includes(c))),subs);
+  S.settings.noInvCats=newNoInv; S.cpiMap=NM;
+  // investeringen blijven wat ze waren
+  for(const [a,was] of before){ if(!was && isInv(a)) a.regular=true; }
+  // dubbele maandinvoer (zelfde maand, categorie en subcategorie) samenvoegen
+  const seen=new Map(), keep=[];
+  for(const a of S.actuals){ if(a.grid && a.monthTotal==null && a.kind==='uit'){ const k=a.date.slice(0,7)+'|'+a.cat+'|'+(a.sub||''); const o=seen.get(k); if(o){ o.amount=Math.round((+o.amount + +a.amount)*100)/100; continue; } seen.set(k,a); } keep.push(a); }
+  S.actuals=keep;
+  const M=hgMap(); for(const k of Object.keys(M)) if(k.startsWith('uit|')) delete M[k]; for(const g of hgList('uit')) M['uit|'+g.name]=g.id;
+  S.settings.hgMigrated=true; _cpiMemo=null; save(); render(); toast('Klaar: je hoofdgroepen zijn nu je categorieën');
+}
+/* Analyse in onderdelen: alleen het gekozen onderdeel tonen */
+let anSec='maand';
+const AN_SECS=[['maand','Per maand'],['cat','Per categorie'],['jaar','Per jaar en verdeling'],['vergelijk','Jaren vergelijken'],['inflatie','Persoonlijke inflatie']];
+function applyAnSec(){
+  const main=$('#main'); if(!main) return; const kids=[...main.children]; let last=null;
+  for(const el of kids){ const h=(el.querySelector('h2')||{}).textContent||''; let sec=null;
+    if(/persoonlijke inflatie/i.test(h)) sec='inflatie';
+    else if(/jaren vergelijken/i.test(h)) sec='vergelijk';
+    else if(/per maand, per categorie/i.test(h)) sec='maand';
+    else if(/per jaar|^verdeling/i.test(h.trim())) sec='jaar';
+    else if(/per categorie|verloop van/i.test(h)) sec='cat';
+    else if(el.tagName==='P' && last) sec=last;
+    if(sec){ el.dataset.sec=sec; last=sec; el.style.display=sec===anSec?'':'none'; }
+    if(el.classList.contains('g3')||el.classList.contains('filters')) el.style.display=anSec==='inflatie'?'none':''; }
+  if(!$('#anSecBar')){ const f=main.querySelector('.filters'); if(f) f.insertAdjacentHTML('beforebegin',`<div id="anSecBar" class="toggle" style="margin:0 0 12px;flex-wrap:wrap">${AN_SECS.map(([k,l])=>`<button data-a="anSec" data-v="${k}" class="${k===anSec?'on':''}">${l}</button>`).join('')}</div>`); }
+  else $('#anSecBar').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===anSec));
 }
 function hgAction(a,b){
   const kind=hgKind, list=hgList(kind), M=hgMap();
@@ -2144,7 +2197,7 @@ function yearCompareSection(kind){
     <p class="small muted" style="margin-top:8px">Vink de jaren aan die je wilt vergelijken. ${anPieCat?'Je vergelijkt nu de subcategorieën van <b>'+esc(anPieCat)+'</b>; sluit de categorie rechtsboven om weer alle categorieën te zien.':'Klik op een taartdeel hierboven om de subcategorieën van één categorie te vergelijken.'}</p>
     ${groupedCompare(rows,anCmp)}</div>`;
 }
-function vAnalyse(){ window._anGroup=anLevel==='groep'; let h; try{ h=vAnalyse0(); } finally{ window._anGroup=false; } return h+cpiCard(); }
+function vAnalyse(){ window._anGroup=anLevel==='groep' && !(S.settings.hgMigrated&&anKind==='uit'); let h; try{ h=vAnalyse0(); } finally{ window._anGroup=false; } return h+cpiCard(); }
 function vAnalyse0(){
   const kind=anKind, months=anMonths(), d=anData(kind,months), c=ymI(curYm());
   const years=[...new Set(S.actuals.map(a=>a.date.slice(0,4)))].filter(y=>y<=String(curY())&&+y>=showFrom()).sort().reverse();
@@ -2171,8 +2224,8 @@ function vAnalyse0(){
     <select id="anPer" style="padding:7px 10px;border:1px solid var(--line);border-radius:9px">${[['last3','Laatste 3 maanden'],['last6','Laatste 6 maanden'],['last12','Laatste 12 maanden'],['last24','Laatste 24 maanden'],['all','Alles']].map(([v,l])=>`<option value="${v}" ${anPer===v?'selected':''}>${l}</option>`).join('')}${years.map(y=>`<option value="${y}" ${anPer===y?'selected':''}>Jaar ${y}${+y===curY()?' (tot nu)':''}</option>`).join('')}<option value="month" ${anPer==='month'?'selected':''}>Eén maand…</option><option value="custom" ${anPer==='custom'?'selected':''}>Eigen periode…</option></select>
     ${anPer==='custom'?`<span class="small" style="font-weight:600;color:var(--b800)">van</span><input id="anFrom" class="mnl" inputmode="numeric" placeholder="mm-jjjj" value="${ymToNl(anFrom||iYm(c-12))}" style="padding:6px 10px;border:1px solid var(--line);border-radius:9px;width:100px"><span class="small" style="font-weight:600;color:var(--b800)">t/m</span><input id="anTo" class="mnl" inputmode="numeric" placeholder="mm-jjjj" value="${ymToNl(anTo||iYm(c-1))}" style="padding:6px 10px;border:1px solid var(--line);border-radius:9px;width:100px">`:''}
     ${anPer==='month'?`<input id="anYm" class="mnl" inputmode="numeric" value="${ymToNl(anYm||iYm(c-1))}" placeholder="mm-jjjj" style="padding:6px 10px;border:1px solid var(--line);border-radius:9px;width:110px">`:''}
-    <div class="toggle" title="Hoofdgroepen of categorieën tonen"><button data-a="anLevel" data-v="groep" class="${anLevel==='groep'?'on':''}">Hoofdgroepen</button><button data-a="anLevel" data-v="cat" class="${anLevel==='cat'?'on':''}">Categorieën</button></div>
-    <label class="small" style="display:flex;gap:6px;align-items:center;font-weight:600;color:var(--b800)"><input type="checkbox" id="anSubs" ${anSubs?'checked':''}> ${anLevel==='groep'?'Categorieën':'Subcategorieën'} tonen</label>
+    ${S.settings.hgMigrated&&kind==='uit'?'':`<div class="toggle" title="Hoofdgroepen of categorieën tonen"><button data-a="anLevel" data-v="groep" class="${anLevel==='groep'?'on':''}">Hoofdgroepen</button><button data-a="anLevel" data-v="cat" class="${anLevel==='cat'?'on':''}">Categorieën</button></div>`}
+    <label class="small" style="display:flex;gap:6px;align-items:center;font-weight:600;color:var(--b800)"><input type="checkbox" id="anSubs" ${anSubs?'checked':''}> ${anLevel==='groep'&&!(S.settings.hgMigrated&&kind==='uit')?'Categorieën':'Subcategorieën'} tonen</label>
   </div></div>
   <div class="grid g3">
     <div class="tile"><div class="lbl">Totaal ${what}</div><div class="val">${E(d.total)}</div><div class="note">${months.length===1?mLong(months[0]):`${mName(months[0])} t/m ${mName(months[months.length-1])}`}</div></div>
@@ -2689,7 +2742,7 @@ const HELP={
   <ul><li>Per categorie het totaal, of de subcategorieën afzonderlijk (dan berekent de app het totaal).</li><li>Uitgaven boven het grensbedrag (standaard €500) worden een <b>investering</b> en worden afgeschreven, tenzij de categorie op "nooit een investering" staat.</li>
   <li>Het vinkje <b>Wijziging geldt ook voor alle maanden hierna</b> (bij Verwachting) overschrijft latere maanden; zet het uit als je één maand wilt aanpassen.</li></ul>`],
  maand:['Maand',`<p>Eén maand in detail: verwachte en werkelijke bedragen naast elkaar. Ze worden nooit bij elkaar opgeteld.</p><p>Verwacht komt uit Inkomen plannen, Vaste posten en verwachtingen; werkelijk uit Invoeren. Afschrijving van investeringen staat als aparte categorie.</p>`],
- analyse:['Analyse',`<p>Waar het geld naartoe gaat en waar het vandaan komt, op basis van je werkelijke bedragen.</p><p><b>Hoofdgroepen of categorieën:</b> kies bovenaan het niveau. Hoofdgroepen bundelen je categorieën; klik op een hoofdgroep voor de categorieën erin. Je hoofdgroepen maak, hernoem en vul je zelf bij Instellingen → Hoofdgroepen. Klik op een <b>?</b> bij een tabel of grafiek voor korte uitleg.</p>
+ analyse:['Analyse',`<p>Waar het geld naartoe gaat en waar het vandaan komt, op basis van je werkelijke bedragen.</p><p><b>Onderdelen:</b> kies bovenaan wat je wilt zien: per maand, per categorie, per jaar en verdeling, jaren vergelijken of je persoonlijke inflatie.</p><p><b>Hoofdgroepen of categorieën:</b> kies bovenaan het niveau. Hoofdgroepen bundelen je categorieën; klik op een hoofdgroep voor de categorieën erin. Je hoofdgroepen maak, hernoem en vul je zelf bij Instellingen → Hoofdgroepen. Klik op een <b>?</b> bij een tabel of grafiek voor korte uitleg.</p>
   <ul><li><b>Per jaar:</b> klik op een staaf om dat jaar te kiezen.</li><li><b>Taartdiagram:</b> klik op een categorie voor de subcategorieën; bij Afschrijving zie je de investeringen.</li><li><b>Jaren vergelijken:</b> vink jaren aan om categorieën of subcategorieën naast elkaar te zetten.</li></ul>
   <p>Het lopende jaar telt tot en met de huidige maand.</p>
   <p><b>Jouw persoonlijke inflatie</b> (onderaan): de app haalt elke twee weken de prijsstijging per categorie op bij het CBS (jaarmutatie van de consumentenprijsindex). Per categorie: jouw aandeel in de uitgaven van de laatste 12 maanden × de prijsstijging = bijdrage. Alle bijdragen samen zijn jouw inflatie. <i>Voorbeeld:</i> boodschappen zijn 18% van je uitgaven en worden 3,4% duurder: 0,18 × 3,4 = 0,61 procentpunt.</p>
@@ -2740,6 +2793,7 @@ function render(){
   const fn={kort:vKort,inkomen:vInkomen,vrij:vVrij,analyse:vAnalyse,invoer:vInvoer,overzicht:vOverzicht,rekeningen:vRekeningen,maand:vMaand,vast:vVast,investeringen:vInvesteringen,rendement:vRendement,prognose:vPrognose,instellingen:vInstellingen}[view];
   $('#main').innerHTML=fn();
   addHelpBtn(); addCardHelp();
+  if(view==='analyse') applyAnSec();
   if(view==='kort') kortAfter(true);
   { const w=document.querySelector('.amwrap'); if(w){ w.scrollLeft=window._amSL??w.scrollWidth; w.addEventListener('scroll',()=>{ window._amSL=w.scrollLeft; }); } }
 }
@@ -2815,7 +2869,9 @@ document.addEventListener('click',e=>{
     case 'addRec': recurringForm(k); break;
     case 'help': helpModal(); break;
     case 'chelp': e.preventDefault(); e.stopPropagation(); cardHelpModal(b.dataset.k); break;
+    case 'hgMigrate': confirmBox('Je hoofdgroepen worden je uitgavencategorieën. Je oude categorieën worden subcategorieën eronder. Alle bedragen gaan mee. Doorgaan?',()=>hgMigrate(),'Omzetten'); break;
     case 'hgSel': case 'hgKind': case 'hgAdd': case 'hgDel': case 'hgUn': case 'hgAuto': case 'hgClear': if(a==='hgSel' && e.target.closest('input')){ hgSel=b.dataset.id; document.querySelectorAll('#hgCard [data-a=hgSel]').forEach(x=>x.style.border=x===b?'2px solid var(--b500,#2a78d6)':''); break; } hgAction(a,b); break;
+    case 'anSec': anSec=b.dataset.v; applyAnSec(); window.scrollTo(0,0); break;
     case 'anLevel': anLevel=b.dataset.v; anFocus=null; anPieCat=null; keepScroll(); break;
     case 'cpiMap': cpiMapModal(); break;
     case 'cpiFetch': cpiFetch(true); break;
