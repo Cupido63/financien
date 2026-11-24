@@ -1680,29 +1680,81 @@ function accMonthCard(){
   ${hidden.length?`<div class="row" style="gap:6px;flex-wrap:wrap;margin:0 0 10px"><span class="small muted">Verborgen (telt niet mee):</span>${hidden.map(a=>`<button class="btn sec sm" data-a="amShow" data-id="${a.id}" title="Weer tonen">+ ${esc(a.name)}</button>`).join('')}${hidden.length>1?'<button class="btn ghost sm" data-a="amShowAll">Alles tonen</button>':''}</div>`:''}
   <div class="tablewrap amwrap" style="max-height:75vh;overflow:auto"><table class="amtab" style="border-collapse:separate;border-spacing:0">${head}${body}${foot}</table></div></details>`;
 }
-/* ============ Hoofdgroepen voor categorieën ============ */
-const GROUPS={uit:['Wonen','Energie en water','Dagelijks leven','Mobiliteit','Vrije tijd','Verzekeringen en overig'], in:['Werk','Uitkeringen en pensioen','Overig']};
-const GROUP_COLORS=['#2a78d6','#eda100','#1baf7a','#eb6834','#e87ba4','#6250d6'];
-let anLevel='groep';
+/* ============ Hoofdgroepen (zelf in te delen) ============
+   S.settings.hgroups = {uit:[{id,name}], in:[...]}; S.settings.hmap = {'uit|Cat':gid, 'uit|Cat|Sub':gid} (subcategorie gaat voor) */
+const GROUP_COLORS=['#2a78d6','#eda100','#1baf7a','#eb6834','#e87ba4','#6250d6','#0f8b8d','#a8326e','#7a5c99','#3f7d20'];
+const NOGROUP='Niet ingedeeld';
+let anLevel='groep', hgKind='uit', hgSel=null;
 function autoGroup(kind,cat){
   const c=String(cat||'');
   if(kind==='in') return /salaris|loon|werk|bonus|vakantiegeld|freelance|onderneming|winst/i.test(c)?'Werk':/aow|pensioen|uitkering|toeslag|ww\b|wao|wia|kinderbijslag|teruggave|belasting/i.test(c)?'Uitkeringen en pensioen':'Overig';
   if(/energie|gas|stroom|elektr|water/i.test(c)) return 'Energie en water';
   if(/wonen|hypothe|huur|woning|onderhoud|inricht|gemeente|vve|tuin|meubel/i.test(c)) return 'Wonen';
   if(/vervoer|auto|mobiliteit|brandstof|benzine|laden|lease|ov\b|openbaar|fiets|parkeren|trein/i.test(c)) return 'Mobiliteit';
-  if(/vrije tijd|vakantie|reis|uit eten|restaurant|horeca|bezorg|sport|hobby|uitgaan|abonnement|stream|cadeau|feest|cultuur|recreatie|telefoon|internet|media/i.test(c)) return 'Vrije tijd';
-  if(/boodschap|eten|voeding|supermarkt|drogist|kleding|schoen|zorg|medisch|apotheek|kind|huisdier|persoonlijk|verzorging/i.test(c)) return 'Dagelijks leven';
-  return 'Verzekeringen en overig';
+  if(/vrije tijd|vakantie|reis|uit eten|restaurant|cafe|café|horeca|bezorg|sport|hobby|uitgaan|abonnement|stream|cadeau|feest|cultuur|recreatie|telefoon|internet|media/i.test(c)) return 'Vrije tijd';
+  if(/boodschap|eten|voeding|levensmiddel|supermarkt|drogist|kleding|schoen|zorg|medisch|apotheek|arts|ziekenhuis|kind|huisdier|persoonlijk|verzorging/i.test(c)) return 'Dagelijks leven';
+  return kind==='uit'?'Verzekeringen en overig':'Overig';
 }
-const groupOf=(kind,cat)=>cat===AFS?AFS:((S.settings.catGroups||{})[kind+'|'+cat]||autoGroup(kind,cat));
+function hgList(kind){ const H=(S.settings.hgroups ||= {});
+  if(!H[kind]) H[kind]=(kind==='uit'?['Wonen','Energie en water','Dagelijks leven','Mobiliteit','Vrije tijd','Verzekeringen en overig']:['Werk','Uitkeringen en pensioen','Overig']).map(n=>({id:uid(),name:n}));
+  return H[kind]; }
+const hgMap=()=>(S.settings.hmap ||= {});
+const hgName=(kind,id)=>{ const g=hgList(kind).find(x=>x.id===id); return g?g.name:null; };
+function groupOf(kind,cat,sub){ if(cat===AFS) return AFS; const M=hgMap();
+  const id=(sub!=null&&M[kind+'|'+cat+'|'+sub])||M[kind+'|'+cat]; return (id&&hgName(kind,id))||NOGROUP; }
+const GROUPS={get uit(){ return hgList('uit').map(g=>g.name).concat(NOGROUP); }, get in(){ return hgList('in').map(g=>g.name).concat(NOGROUP); }};
 function groupData(kind,d){
-  const cats={}, byMonth={};
-  for(const [c,o] of Object.entries(d.cats)){ const g=groupOf(kind,c); const t=(cats[g] ||= {total:0,subs:{}}); t.total+=o.total;
-    if(g===AFS) Object.assign(t.subs,o.subs); else t.subs[c]=(t.subs[c]||0)+o.total; }
+  const M=hgMap(), cats={}, byMonth={};
+  const lab=(c,s)=>s!=null&&M[kind+'|'+c+'|'+s]?c+' › '+s:c;
+  const addTo=(obj,g,l,v)=>{ const t=(obj[g] ||= {total:0,subs:{}}); t.total+=v; t.subs[l]=(t.subs[l]||0)+v; };
+  for(const [c,o] of Object.entries(d.cats)){
+    if(c===AFS){ cats[AFS]={total:o.total,subs:{...o.subs}}; continue; }
+    const subs=Object.entries(o.subs||{});
+    if(subs.length) for(const [s,v] of subs){ const sk=/^(Zonder subcategorie|Niet verdeeld)$/.test(s)?null:s; addTo(cats,groupOf(kind,c,sk),lab(c,sk),v); }
+    else addTo(cats,groupOf(kind,c,null),c,o.total); }
   for(const [k,o] of Object.entries(d.byMonth)){
     if(k.includes('|')){ const [ym,c]=k.split('|'); if(c===AFS) byMonth[ym+'|'+AFS]={...o}; continue; }
-    const t=(byMonth[k] ||= {}); for(const [c,v] of Object.entries(o)){ const g=groupOf(kind,c); t[g]=(t[g]||0)+v; if(g!==AFS){ const sb=(byMonth[k+'|'+g] ||= {}); sb[c]=(sb[c]||0)+v; } } }
+    const t=(byMonth[k] ||= {});
+    for(const [c,v] of Object.entries(o)){ if(c===AFS){ t[AFS]=(t[AFS]||0)+v; continue; }
+      const sb=d.byMonth[k+'|'+c], parts=sb&&Object.keys(sb).length?Object.entries(sb):[[null,v]];
+      for(const [s,vv] of parts){ const sk=s==null||/^(Zonder subcategorie|Niet verdeeld)$/.test(s)?null:s; const g=groupOf(kind,c,sk), l=lab(c,sk);
+        t[g]=(t[g]||0)+vv; const x=(byMonth[k+'|'+g] ||= {}); x[l]=(x[l]||0)+vv; } } }
   return {...d,cats,byMonth};
+}
+/* Instellingen: hoofdgroepen links, nog niet ingedeelde categorieën en subcategorieën rechts */
+function hgEditor(){
+  const kind=hgKind, list=hgList(kind), M=hgMap(); if(!hgSel||!list.some(g=>g.id===hgSel)) hgSel=list[0]&&list[0].id;
+  const cats=kind==='uit'?S.expCats:S.incCats, subsOf=c=>kind==='uit'?(S.subCats[c]||[]):(S.settings.people||[]).concat('Samen');
+  const itemsOf=id=>{ const r=[]; for(const c of cats){ if(M[kind+'|'+c]===id) r.push({key:kind+'|'+c,label:c}); if(kind==='uit') for(const s of subsOf(c)) if(M[kind+'|'+c+'|'+s]===id) r.push({key:kind+'|'+c+'|'+s,label:c+' › '+s}); } return r; };
+  const left=list.map((g,i)=>{ const it=itemsOf(g.id), on=g.id===hgSel;
+    return `<div class="catbox" style="${on?'border:2px solid var(--b500,#2a78d6);':''}cursor:pointer" data-a="hgSel" data-id="${g.id}">
+      <div class="row" style="gap:8px"><i class="sw" style="background:${GROUP_COLORS[i%GROUP_COLORS.length]}"></i><input class="hgname" data-id="${g.id}" value="${esc(g.name)}" style="flex:1;min-width:0;font-weight:600"> <span class="small muted">${it.length}</span>
+      <button class="btn ghost sm" data-a="hgDel" data-id="${g.id}" title="Hoofdgroep verwijderen">✕</button></div>
+      <div class="subs" style="margin-top:6px">${it.map(x=>`<span class="subchip">${esc(x.label)}<button data-a="hgUn" data-k="${esc(x.key)}" title="Uit deze hoofdgroep halen">✕</button></span>`).join('')||`<span class="small muted">${on?'Vink rechts categorieën aan om ze hier in te delen.':'Klik om deze hoofdgroep te kiezen.'}</span>`}</div></div>`; }).join('');
+  const rest=[]; for(const c of cats){ if(M[kind+'|'+c]) continue; const subs=kind==='uit'?subsOf(c).filter(s=>!M[kind+'|'+c+'|'+s]):[];
+    rest.push(`<div style="margin:6px 0"><label style="font-weight:600;cursor:pointer"><input type="checkbox" class="hgpick" data-k="${esc(kind+'|'+c)}"> ${esc(c)}${subs.length?' <span class="small muted">(hele categorie)</span>':''}</label>${subs.length?`<div style="padding-left:24px">${subs.map(s=>`<label class="small" style="display:inline-flex;gap:4px;margin:2px 12px 2px 0;cursor:pointer"><input type="checkbox" class="hgpick" data-k="${esc(kind+'|'+c+'|'+s)}"> ${esc(s)}</label>`).join('')}</div>`:''}</div>`); }
+  const selName=hgName(kind,hgSel)||'';
+  return `<div class="card" id="hgCard"><div class="row"><h2 style="margin:0">Hoofdgroepen</h2><span class="spacer"></span><div class="toggle"><button data-a="hgKind" data-v="uit" class="${kind==='uit'?'on':''}">Uitgaven</button><button data-a="hgKind" data-v="in" class="${kind==='in'?'on':''}">Inkomsten</button></div></div>
+  <p class="small muted">Kies links een hoofdgroep en vink rechts aan wat erbij hoort. Wat je aanvinkt verdwijnt rechts, zodat je ziet wat nog over is. Een subcategorie kun je in een andere hoofdgroep zetten dan de rest van de categorie. Niet ingedeeld komt bij Analyse onder "${NOGROUP}".</p>
+  <div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start">
+    <div>${left}<div class="row" style="margin-top:8px"><input id="hgNew" placeholder="Nieuwe hoofdgroep" style="flex:1"><button class="btn sm" data-a="hgAdd">+ Toevoegen</button></div></div>
+    <div class="catbox" style="background:#f7f9fc"><div style="font-weight:700;margin-bottom:4px">Nog niet ingedeeld ${rest.length?`<span class="small muted">→ klik aan voor <b>${esc(selName)}</b></span>`:''}</div>${rest.join('')||'<p class="small muted">Alles is ingedeeld. 👍</p>'}
+      <div class="row" style="margin-top:10px;gap:8px"><button class="btn ghost sm" data-a="hgAuto">Voorstel van de app invullen</button><button class="btn ghost sm" data-a="hgClear">Alles leegmaken</button></div></div>
+  </div></div>`;
+}
+function hgAction(a,b){
+  const kind=hgKind, list=hgList(kind), M=hgMap();
+  if(a==='hgSel'){ hgSel=b.dataset.id; }
+  else if(a==='hgKind'){ hgKind=b.dataset.v; hgSel=null; }
+  else if(a==='hgAdd'){ const n=($('#hgNew').value||'').trim(); if(!n){ toast('Vul een naam in'); return; } if(list.some(g=>g.name.toLowerCase()===n.toLowerCase())){ toast('Die hoofdgroep bestaat al'); return; } const g={id:uid(),name:n}; list.push(g); hgSel=g.id; save(); }
+  else if(a==='hgDel'){ const g=list.find(x=>x.id===b.dataset.id); if(!g) return; if(!confirm(`Hoofdgroep "${g.name}" verwijderen? De categorieën erin worden weer "niet ingedeeld".`)) return;
+    S.settings.hgroups[kind]=list.filter(x=>x!==g); for(const k of Object.keys(M)) if(M[k]===g.id) delete M[k]; save(); }
+  else if(a==='hgUn'){ delete M[b.dataset.k]; save(); }
+  else if(a==='hgAuto'){ const cats=kind==='uit'?S.expCats:S.incCats; let n=0;
+    for(const c of cats){ if(M[kind+'|'+c]) continue; const nm=autoGroup(kind,c); let g=list.find(x=>x.name===nm); if(!g){ g={id:uid(),name:nm}; list.push(g); } M[kind+'|'+c]=g.id; n++; }
+    save(); toast(n?n+' categorieën ingedeeld (voorstel)':'Alles was al ingedeeld'); }
+  else if(a==='hgClear'){ if(!confirm('Alle indelingen voor '+(kind==='uit'?'uitgaven':'inkomsten')+' leegmaken? De hoofdgroepen zelf blijven bestaan.')) return; for(const k of Object.keys(M)) if(k.startsWith(kind+'|')) delete M[k]; save(); }
+  const sc=window.scrollY; render(); window.scrollTo(0,sc);
 }
 /* ============ Korte uitleg bij elke tabel en grafiek (vraagteken) ============
    [wat je ziet, waar het vandaan komt, waar het naartoe gaat] */
@@ -1975,7 +2027,7 @@ function anData0(kind,months){
   const filled=months.filter(ym=>byMonth[ym]);
   return {cats,byMonth,filled,total:sum(Object.values(cats).map(o=>o.total))};
 }
-function catColor(kind,cat){ if(window._anGroup){ const gl=GROUPS[kind]; const gi=gl.indexOf(cat); if(gi>=0) return GROUP_COLORS[gi%GROUP_COLORS.length]; if(cat===AFS) return '#9aa3af'; }
+function catColor(kind,cat){ if(window._anGroup){ const gl=hgList(kind).map(g=>g.name); const gi=gl.indexOf(cat); if(gi>=0) return GROUP_COLORS[gi%GROUP_COLORS.length]; if(cat===AFS||cat===NOGROUP) return '#9aa3af'; }
   const list=kind==='uit'?[...S.expCats,AFS]:S.incCats; const i=list.indexOf(cat); return i>=0&&i<CAT_COLORS.length?CAT_COLORS[i]:REST_COLOR; }
 function rankedBars(kind,d){
   const rows=Object.entries(d.cats).sort((a,b)=>b[1].total-a[1].total); if(!rows.length) return '<p class="muted">Geen werkelijke bedragen in deze periode.</p>';
@@ -2513,7 +2565,6 @@ function catEditor(){
         <span class="catnr">${i+1}</span>
         <input class="catname" data-kind="uit" data-cat="${esc(c)}" value="${esc(c)}" aria-label="Naam categorie">
         <label class="small" style="display:flex;gap:6px;align-items:center;white-space:nowrap" title="Uitgaven in deze categorie blijven altijd een gewone uitgave, ook boven het grensbedrag"><input type="checkbox" class="noinv1" data-cat="${esc(c)}" ${noInv(c)?'checked':''}> nooit investering</label>
-        <select class="catgrp" data-kind="uit" data-cat="${esc(c)}" title="Hoofdgroep" style="width:auto">${GROUPS.uit.map(g=>`<option ${groupOf('uit',c)===g?'selected':''}>${g}</option>`).join('')}</select>
         <span class="spacer"></span>
         <button class="btn ghost sm" data-a="catMove" data-kind="uit" data-cat="${esc(c)}" data-d="-1" ${i===0?'disabled':''} title="Omhoog">▲</button>
         <button class="btn ghost sm" data-a="catMove" data-kind="uit" data-cat="${esc(c)}" data-d="1" ${i===S.expCats.length-1?'disabled':''} title="Omlaag">▼</button>
@@ -2524,7 +2575,7 @@ function catEditor(){
         <span class="subadd"><input class="subnew" data-cat="${esc(c)}" placeholder="+ subcategorie" size="14"><button class="btn sec sm" data-a="subAdd" data-cat="${esc(c)}">Toevoegen</button></span>
       </div></div>`; }).join('');
   const incRows=S.incCats.map((c,i)=>`<div class="catbox"><div class="row cathead" style="gap:8px"><span class="catnr">${i+1}</span>
-      <input class="catname" data-kind="in" data-cat="${esc(c)}" value="${esc(c)}" aria-label="Naam categorie"><select class="catgrp" data-kind="in" data-cat="${esc(c)}" title="Hoofdgroep" style="width:auto">${GROUPS.in.map(g=>`<option ${groupOf('in',c)===g?'selected':''}>${g}</option>`).join('')}</select><span class="spacer"></span>
+      <input class="catname" data-kind="in" data-cat="${esc(c)}" value="${esc(c)}" aria-label="Naam categorie"><span class="spacer"></span>
       <button class="btn ghost sm" data-a="catMove" data-kind="in" data-cat="${esc(c)}" data-d="-1" ${i===0?'disabled':''}>▲</button>
       <button class="btn ghost sm" data-a="catMove" data-kind="in" data-cat="${esc(c)}" data-d="1" ${i===S.incCats.length-1?'disabled':''}>▼</button>
       <button class="btn ghost sm" data-a="catDel" data-kind="in" data-cat="${esc(c)}" title="Categorie verwijderen" aria-label="Categorie verwijderen">✕</button></div></div>`).join('');
@@ -2542,7 +2593,7 @@ function renameCat(kind,old,nw){
   if(nw===AFS) return '"Afschrijving" is gereserveerd';
   if(list.includes(nw)) return 'Die categorie bestaat al';
   list[list.indexOf(old)]=nw;
-  { const G=S.settings.catGroups||{}; if(G[kind+'|'+old]){ G[kind+'|'+nw]=G[kind+'|'+old]; delete G[kind+'|'+old]; } }
+  { const M=S.settings.hmap||{}; for(const k of Object.keys(M)){ if(k===kind+'|'+old||k.startsWith(kind+'|'+old+'|')){ M[kind+'|'+nw+k.slice((kind+'|'+old).length)]=M[k]; delete M[k]; } } }
   for(const a of S.actuals) if(a.kind===kind&&a.cat===old) a.cat=nw;
   for(const r of S.recurring) if(r.kind===kind&&r.cat===old) r.cat=nw;
   for(const e of S.expected) if(e.kind===kind&&e.cat===old) e.cat=nw;
@@ -2597,6 +2648,7 @@ function vInstellingen(){
       <p class="small muted">"Afschrijving" maakt de app zelf aan. Wijzigingen worden meteen opgeslagen.</p></div>
   </div>
   ${catEditor()}
+  ${hgEditor()}
   <div class="card"><h2>Gegevens</h2>
     <p class="small muted">Je gegevens staan versleuteld in je privé GitHub-repository <b>${esc(CFG?CFG.owner+"/"+CFG.repo:"")}</b> en zijn zichtbaar op al je apparaten die je hebt gekoppeld. Status: <span id="syncDot" class="sync ${dbState}">${syncTxt()}</span></p>
     <div class="row"><button class="btn sec" data-a="export">Back-up downloaden</button><button class="btn sec" data-a="copy">Back-up kopiëren</button><button class="btn sec" data-a="paste">Back-up plakken</button><button class="btn sec" data-a="unlink">Koppeling op dit apparaat verwijderen</button><label class="btn sec" style="cursor:pointer">Back-up terugzetten<input type="file" id="importFile" accept=".json,application/json" hidden></label><span class="spacer"></span>${S.demo?'<button class="btn danger" data-a="wipe">Voorbeeldgegevens wissen en leeg beginnen</button>':'<button class="btn sec" data-a="demo">Voorbeeldgegevens laden</button><button class="btn danger" data-a="wipe">Alles wissen</button>'}</div>
@@ -2637,7 +2689,7 @@ const HELP={
   <ul><li>Per categorie het totaal, of de subcategorieën afzonderlijk (dan berekent de app het totaal).</li><li>Uitgaven boven het grensbedrag (standaard €500) worden een <b>investering</b> en worden afgeschreven, tenzij de categorie op "nooit een investering" staat.</li>
   <li>Het vinkje <b>Wijziging geldt ook voor alle maanden hierna</b> (bij Verwachting) overschrijft latere maanden; zet het uit als je één maand wilt aanpassen.</li></ul>`],
  maand:['Maand',`<p>Eén maand in detail: verwachte en werkelijke bedragen naast elkaar. Ze worden nooit bij elkaar opgeteld.</p><p>Verwacht komt uit Inkomen plannen, Vaste posten en verwachtingen; werkelijk uit Invoeren. Afschrijving van investeringen staat als aparte categorie.</p>`],
- analyse:['Analyse',`<p>Waar het geld naartoe gaat en waar het vandaan komt, op basis van je werkelijke bedragen.</p><p><b>Hoofdgroepen of categorieën:</b> kies bovenaan het niveau. Hoofdgroepen (Wonen, Energie en water, Dagelijks leven, Mobiliteit, Vrije tijd, Verzekeringen en overig) bundelen je categorieën; klik op een hoofdgroep voor de categorieën erin. Bij Instellingen kies je per categorie de hoofdgroep. Klik op een <b>?</b> bij een tabel of grafiek voor korte uitleg.</p>
+ analyse:['Analyse',`<p>Waar het geld naartoe gaat en waar het vandaan komt, op basis van je werkelijke bedragen.</p><p><b>Hoofdgroepen of categorieën:</b> kies bovenaan het niveau. Hoofdgroepen bundelen je categorieën; klik op een hoofdgroep voor de categorieën erin. Je hoofdgroepen maak, hernoem en vul je zelf bij Instellingen → Hoofdgroepen. Klik op een <b>?</b> bij een tabel of grafiek voor korte uitleg.</p>
   <ul><li><b>Per jaar:</b> klik op een staaf om dat jaar te kiezen.</li><li><b>Taartdiagram:</b> klik op een categorie voor de subcategorieën; bij Afschrijving zie je de investeringen.</li><li><b>Jaren vergelijken:</b> vink jaren aan om categorieën of subcategorieën naast elkaar te zetten.</li></ul>
   <p>Het lopende jaar telt tot en met de huidige maand.</p>
   <p><b>Jouw persoonlijke inflatie</b> (onderaan): de app haalt elke twee weken de prijsstijging per categorie op bij het CBS (jaarmutatie van de consumentenprijsindex). Per categorie: jouw aandeel in de uitgaven van de laatste 12 maanden × de prijsstijging = bijdrage. Alle bijdragen samen zijn jouw inflatie. <i>Voorbeeld:</i> boodschappen zijn 18% van je uitgaven en worden 3,4% duurder: 0,18 × 3,4 = 0,61 procentpunt.</p>
@@ -2763,6 +2815,7 @@ document.addEventListener('click',e=>{
     case 'addRec': recurringForm(k); break;
     case 'help': helpModal(); break;
     case 'chelp': e.preventDefault(); e.stopPropagation(); cardHelpModal(b.dataset.k); break;
+    case 'hgSel': case 'hgKind': case 'hgAdd': case 'hgDel': case 'hgUn': case 'hgAuto': case 'hgClear': if(a==='hgSel' && e.target.closest('input')){ hgSel=b.dataset.id; document.querySelectorAll('#hgCard [data-a=hgSel]').forEach(x=>x.style.border=x===b?'2px solid var(--b500,#2a78d6)':''); break; } hgAction(a,b); break;
     case 'anLevel': anLevel=b.dataset.v; anFocus=null; anPieCat=null; keepScroll(); break;
     case 'cpiMap': cpiMapModal(); break;
     case 'cpiFetch': cpiFetch(true); break;
@@ -2822,7 +2875,8 @@ document.addEventListener('change',e=>{
   if(t.classList.contains('subname')){ const err=renameSub(t.dataset.cat,t.dataset.sub,t.value); if(err){ toast(err); t.value=t.dataset.sub; return; } save(); keepScroll(); toast('Naam gewijzigd'); return; }
   if(t.classList.contains('pfield')){ const v=nlToIso(t.value); if(v===null){ toast('Vul de datum in als dd-mm-jjjj, bijvoorbeeld 10-09-1963'); t.focus(); return; }
     const P=(S.settings.persons ||= {}); const o=(P[t.dataset.p] ||= {}); if(v) o[t.dataset.k]=v; else delete o[t.dataset.k]; save(); keepScroll(); toast(v?'Opgeslagen: '+dNl(v):'Datum gewist'); return; }
-  if(t.classList.contains('catgrp')){ const G=(S.settings.catGroups ||= {}); G[t.dataset.kind+'|'+t.dataset.cat]=t.value; save(); toast(t.dataset.cat+' → '+t.value); return; }
+  if(t.classList.contains('hgpick')){ if(!hgSel){ toast('Kies eerst links een hoofdgroep'); t.checked=false; return; } hgMap()[t.dataset.k]=hgSel; save(); const sc=window.scrollY; render(); window.scrollTo(0,sc); return; }
+  if(t.classList.contains('hgname')){ const g=hgList(hgKind).find(x=>x.id===t.dataset.id); const n=t.value.trim(); if(g&&n){ g.name=n; save(); toast('Naam gewijzigd'); } else if(g) t.value=g.name; return; }
   if(t.classList.contains('amacc')){ const o=new Set(S.settings.amOff||[]); if(t.checked) o.delete(t.dataset.id); else o.add(t.dataset.id); S.settings.amOff=[...o]; save(); const w=document.querySelector('.amtab')?.parentElement, st=w?[w.scrollTop,w.scrollLeft]:null; keepScroll(); const w2=document.querySelector('.amtab')?.parentElement; if(w2&&st){ w2.scrollTop=st[0]; w2.scrollLeft=st[1]; } return; }
   if(t.classList.contains('b3acc')){ const a=accById(t.dataset.id); if(a){ if(t.checked) delete a.noBox3; else a.noBox3=true; save(); keepScroll(); toast(a.name+(t.checked?': telt mee voor box 3':': telt niet mee voor box 3')); } return; }
   if(t.id==='cpiUse'){ S.settings.cpiUse=t.checked; _cpiMemo=null; save(); keepScroll(); toast(t.checked?'Persoonlijke inflatie wordt gebruikt':'Vaste inflatie uit Instellingen wordt gebruikt'); return; }
