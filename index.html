@@ -1700,8 +1700,11 @@ function hgList(kind){ const H=(S.settings.hgroups ||= {});
   return H[kind]; }
 const hgMap=()=>(S.settings.hmap ||= {});
 const hgName=(kind,id)=>{ const g=hgList(kind).find(x=>x.id===id); return g?g.name:null; };
+/* Categorie waarvan alle subcategorieën zijn ingedeeld: bedragen zonder subcategorie gaan naar de hoofdgroep waar de meeste subcategorieën in zitten */
+function hgImplicit(kind,cat){ if(kind!=='uit') return null; const M=hgMap(), subs=S.subCats[cat]||[]; if(!subs.length) return null;
+  const ids=subs.map(s=>M[kind+'|'+cat+'|'+s]); if(ids.some(x=>!x)) return null; const n={}; let best=null; for(const id of ids){ n[id]=(n[id]||0)+1; if(!best||n[id]>n[best]) best=id; } return best; }
 function groupOf(kind,cat,sub){ if(cat===AFS) return AFS; const M=hgMap();
-  const id=(sub!=null&&M[kind+'|'+cat+'|'+sub])||M[kind+'|'+cat]; return (id&&hgName(kind,id))||NOGROUP; }
+  const id=(sub!=null&&M[kind+'|'+cat+'|'+sub])||M[kind+'|'+cat]||hgImplicit(kind,cat); return (id&&hgName(kind,id))||NOGROUP; }
 const GROUPS={get uit(){ return hgList('uit').map(g=>g.name).concat(NOGROUP); }, get in(){ return hgList('in').map(g=>g.name).concat(NOGROUP); }};
 function groupData(kind,d){
   const M=hgMap(), cats={}, byMonth={};
@@ -1732,11 +1735,11 @@ function hgEditor(){
       <div class="row" style="gap:8px"><i class="sw" style="background:${GROUP_COLORS[i%GROUP_COLORS.length]}"></i><input class="hgname" data-id="${g.id}" value="${esc(g.name)}" style="flex:1;min-width:0;font-weight:600"> <span class="small muted">${it.length}</span>
       <button class="btn ghost sm" data-a="hgDel" data-id="${g.id}" title="Hoofdgroep verwijderen">✕</button></div>
       <div class="subs" style="margin-top:6px">${it.map(x=>`<span class="subchip">${esc(x.label)}<button data-a="hgUn" data-k="${esc(x.key)}" title="Uit deze hoofdgroep halen">✕</button></span>`).join('')||`<span class="small muted">${on?'Vink rechts categorieën aan om ze hier in te delen.':'Klik om deze hoofdgroep te kiezen.'}</span>`}</div></div>`; }).join('');
-  const rest=[]; for(const c of cats){ if(M[kind+'|'+c]) continue; const subs=kind==='uit'?subsOf(c).filter(s=>!M[kind+'|'+c+'|'+s]):[];
+  const rest=[]; for(const c of cats){ if(M[kind+'|'+c]||hgImplicit(kind,c)) continue; const subs=kind==='uit'?subsOf(c).filter(s=>!M[kind+'|'+c+'|'+s]):[];
     rest.push(`<div style="margin:6px 0"><label style="font-weight:600;cursor:pointer"><input type="checkbox" class="hgpick" data-k="${esc(kind+'|'+c)}"> ${esc(c)}${subs.length?' <span class="small muted">(hele categorie)</span>':''}</label>${subs.length?`<div style="padding-left:24px">${subs.map(s=>`<label class="small" style="display:inline-flex;gap:4px;margin:2px 12px 2px 0;cursor:pointer"><input type="checkbox" class="hgpick" data-k="${esc(kind+'|'+c+'|'+s)}"> ${esc(s)}</label>`).join('')}</div>`:''}</div>`); }
   const selName=hgName(kind,hgSel)||'';
   return `<div class="card" id="hgCard"><div class="row"><h2 style="margin:0">Hoofdgroepen</h2><span class="spacer"></span><div class="toggle">${S.settings.hgMigrated?'':`<button data-a="hgKind" data-v="uit" class="${kind==='uit'?'on':''}">Uitgaven</button>`}<button data-a="hgKind" data-v="in" class="${kind==='in'?'on':''}">Inkomsten</button></div></div>
-  <p class="small muted">Kies links een hoofdgroep en vink rechts aan wat erbij hoort. Wat je aanvinkt verdwijnt rechts, zodat je ziet wat nog over is. Een subcategorie kun je in een andere hoofdgroep zetten dan de rest van de categorie. Niet ingedeeld komt bij Analyse onder "${NOGROUP}".</p>
+  <p class="small muted">Kies links een hoofdgroep en vink rechts aan wat erbij hoort. Wat je aanvinkt verdwijnt rechts, zodat je ziet wat nog over is. Een subcategorie kun je in een andere hoofdgroep zetten dan de rest van de categorie. Heb je alle subcategorieën van een categorie ingedeeld, dan is die categorie klaar en verdwijnt ze ook. Niet ingedeeld komt bij Analyse onder "${NOGROUP}".</p>
   <div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start">
     <div>${left}<div class="row" style="margin-top:8px"><input id="hgNew" placeholder="Nieuwe hoofdgroep" style="flex:1"><button class="btn sm" data-a="hgAdd">+ Toevoegen</button></div></div>
     <div class="catbox" style="background:#f7f9fc"><div style="font-weight:700;margin-bottom:4px">Nog niet ingedeeld ${rest.length?`<span class="small muted">→ klik aan voor <b>${esc(selName)}</b></span>`:''}</div>${rest.join('')||'<p class="small muted">Alles is ingedeeld. 👍</p>'}
@@ -1749,8 +1752,8 @@ function hgEditor(){
 function hgLeft(kind){ const M=hgMap(); const cats=kind==='uit'?S.expCats:S.incCats; const r=[];
   for(const c of cats){ if(M[kind+'|'+c]) continue; const subs=(S.subCats[c]||[]).filter(s=>!M[kind+'|'+c+'|'+s]); if(!(S.subCats[c]||[]).length||subs.length||!S.actuals.every(a=>a.cat!==c||a.sub)) r.push(c); } return r; }
 function hgMigrate(){
-  const left=hgLeft('uit'); if(left.length){ toast('Deel eerst alles in. Nog over: '+left.join(', ')); return; }
-  const groups=hgList('uit').map(g=>g.name), newSub=(c,s)=>s?s:(groups.includes(c)?'':c);
+  const left=S.expCats.filter(c=>groupOf('uit',c,null)===NOGROUP || (S.subCats[c]||[]).some(s=>groupOf('uit',c,s)===NOGROUP)); if(left.length){ toast('Deel eerst alles in. Nog over: '+left.join(', ')); return; }
+  const groups=hgList('uit').map(g=>g.name), MM=hgMap(), newSub=(c,s)=>s?s:((groups.includes(c)||!MM['uit|'+c])?'':c);
   const before=new Map(S.actuals.map(a=>[a,isInv(a)]));
   const oldNoInv=new Set(S.settings.noInvCats||[]);
   const conv=x=>{ if(x.kind!=='uit'||!x.cat||x.cat===UNDIST||x.cat===AFS) return; const g=groupOf('uit',x.cat,x.sub||null); if(g===NOGROUP) return; x.sub=newSub(x.cat,x.sub||''); x.cat=g; };
@@ -1794,6 +1797,17 @@ function applyAnSec(){
     if(el.classList.contains('g3')||el.classList.contains('filters')) el.style.display=anSec==='inflatie'?'none':''; }
   if(!$('#anSecBar')){ const f=main.querySelector('.filters'); if(f) f.insertAdjacentHTML('beforebegin',`<div id="anSecBar" class="toggle" style="margin:0 0 12px;flex-wrap:wrap">${AN_SECS.map(([k,l])=>`<button data-a="anSec" data-v="${k}" class="${k===anSec?'on':''}">${l}</button>`).join('')}</div>`); }
   else $('#anSecBar').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===anSec));
+}
+/* Instellingen in onderdelen */
+let setSec='alg';
+const SET_SECS=[['alg','Algemeen en aannames',/^algemeen/i],['pers','Personen en pensioen',/^personen/i],['cat','Categorieën',/categorie/i],['hg','Hoofdgroepen',/^hoofdgroepen/i],['data','Gegevens en back-up',/^gegevens/i]];
+function applySetSec(){
+  const main=$('#main'); if(!main) return;
+  main.querySelectorAll('.card').forEach(c=>{ const h=((c.querySelector('h2')||{}).textContent||'').trim(); const d=SET_SECS.find(x=>x[2].test(h)); if(d) c.style.display=d[0]===setSec?'':'none'; });
+  main.querySelectorAll('.grid').forEach(g=>{ const cs=[...g.children].filter(x=>x.classList.contains('card')); if(!cs.length) return; const vis=cs.filter(x=>x.style.display!=='none');
+    g.style.display=vis.length?'':'none'; if(!g.dataset.gtc) g.dataset.gtc=g.style.gridTemplateColumns||''; g.style.gridTemplateColumns=vis.length===1&&cs.length>1?'1fr':g.dataset.gtc; });
+  if(!$('#setSecBar')){ const anchor=main.querySelector('.warn')||main.querySelector('p.sub'); if(anchor) anchor.insertAdjacentHTML('afterend',`<div id="setSecBar" class="toggle" style="margin:12px 0;flex-wrap:wrap">${SET_SECS.map(([k,l])=>`<button data-a="setSec" data-v="${k}" class="${k===setSec?'on':''}">${l}</button>`).join('')}</div>`); }
+  else $('#setSecBar').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===setSec));
 }
 function hgAction(a,b){
   const kind=hgKind, list=hgList(kind), M=hgMap();
@@ -2794,6 +2808,7 @@ function render(){
   $('#main').innerHTML=fn();
   addHelpBtn(); addCardHelp();
   if(view==='analyse') applyAnSec();
+  if(view==='instellingen') applySetSec();
   if(view==='kort') kortAfter(true);
   { const w=document.querySelector('.amwrap'); if(w){ w.scrollLeft=window._amSL??w.scrollWidth; w.addEventListener('scroll',()=>{ window._amSL=w.scrollLeft; }); } }
 }
@@ -2871,6 +2886,7 @@ document.addEventListener('click',e=>{
     case 'chelp': e.preventDefault(); e.stopPropagation(); cardHelpModal(b.dataset.k); break;
     case 'hgMigrate': confirmBox('Je hoofdgroepen worden je uitgavencategorieën. Je oude categorieën worden subcategorieën eronder. Alle bedragen gaan mee. Doorgaan?',()=>hgMigrate(),'Omzetten'); break;
     case 'hgSel': case 'hgKind': case 'hgAdd': case 'hgDel': case 'hgUn': case 'hgAuto': case 'hgClear': if(a==='hgSel' && e.target.closest('input')){ hgSel=b.dataset.id; document.querySelectorAll('#hgCard [data-a=hgSel]').forEach(x=>x.style.border=x===b?'2px solid var(--b500,#2a78d6)':''); break; } hgAction(a,b); break;
+    case 'setSec': setSec=b.dataset.v; applySetSec(); window.scrollTo(0,0); break;
     case 'anSec': anSec=b.dataset.v; applyAnSec(); window.scrollTo(0,0); break;
     case 'anLevel': anLevel=b.dataset.v; anFocus=null; anPieCat=null; keepScroll(); break;
     case 'cpiMap': cpiMapModal(); break;
