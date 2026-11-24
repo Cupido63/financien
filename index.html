@@ -806,7 +806,7 @@ function prognosis(){
     const p=yp(y); infF*=1+p.infl/100; groF*=1+p.growth/100;
     const incByCat={}, incByPerson={}, incByPC={}, decPC={}; let inc=0;
     for(let m=1;m<=12;m++){ for(const [c,o] of Object.entries(expIncome(y+'-'+pad(m)))) for(const [sb,v] of Object.entries(o)){
-      const amt=v*groF; inc+=amt; incByCat[c]=(incByCat[c]||0)+amt; const pp=sb||'Samen (categorietotaal)'; incByPerson[pp]=(incByPerson[pp]||0)+amt; incByPC[pp+'|'+c]=(incByPC[pp+'|'+c]||0)+amt; if(m===12) decPC[pp+'|'+c]=(decPC[pp+'|'+c]||0)+amt; } }
+      const amt=c==='Lijfrente'?v:v*groF; inc+=amt; incByCat[c]=(incByCat[c]||0)+amt; const pp=sb||'Samen (categorietotaal)'; incByPerson[pp]=(incByPerson[pp]||0)+amt; incByPC[pp+'|'+c]=(incByPC[pp+'|'+c]||0)+amt; if(m===12) decPC[pp+'|'+c]=(decPC[pp+'|'+c]||0)+amt; } }
     const inY=d=> d.slice(0,4)===String(y) && d>todayStr();
     const oneOff=sum(S.actuals.filter(a=>a.kind==='uit' && !a.grid && a.monthTotal==null && inY(a.date)).map(a=>+a.amount))
       + sum(S.expected.filter(e=>e.kind==='uit' && inY(lastDay(e.ym))).map(e=>+e.amount));
@@ -1423,11 +1423,11 @@ function kortPlan(off=kortOff,count=12){
   for(let k=1;k<=H;k++){
     const ym=iYm(c+k), inFirst=d=> k===1 ? (d>today && d.slice(0,7)<=ym) : d.slice(0,7)===ym;
     // reguliere inkomsten
-    let inc=0;
-    if(kortInc==='hist') inc=hi.avg;
-    else { const o=expIncome(ym); for(const subs of Object.values(o)) for(const v2 of Object.values(subs)) inc+=v2;
-      for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && r.start===ym) inc-=+r.amount;
-      for(const e of S.expected) if(e.kind==='in' && e.ym===ym) inc-=+e.amount; }
+    let inc=0; const incL=[];
+    if(kortInc==='hist'){ inc=hi.avg; incL.push({txt:'Gemiddelde inkomsten',amt:hi.avg}); for(const x of lfIncome(ym)){ inc+=x.v; incL.push({txt:'Lijfrente ('+x.p+')',amt:x.v}); } }
+    else { const o=expIncome(ym); for(const [c,subs] of Object.entries(o)) for(const [sb,v2] of Object.entries(subs)){ inc+=v2; if(Math.abs(v2)>=0.5) incL.push({txt:c+(sb?' ('+sb+')':''),amt:v2}); }
+      for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && r.start===ym){ inc-=+r.amount; incL.push({txt:r.name+' (incidenteel, zie hieronder)',amt:-r.amount}); }
+      for(const e of S.expected) if(e.kind==='in' && e.ym===ym){ inc-=+e.amount; incL.push({txt:(e.note||e.cat)+' (incidenteel, zie hieronder)',amt:-e.amount}); } }
     const exp=hu.avg;
     // incidenteel
     const incI=[], expI=[], inv=[];
@@ -1440,7 +1440,7 @@ function kortPlan(off=kortOff,count=12){
     const begin=v; v=v+inc-exp+sI-sE-sV+ret;
     const mat=sum(mats.filter(m=>inFirst(m.date)).map(m=>m.amount));
     vr=vr+inc-exp+sI-sE-sV-inlegNB+mat+sum((retL||[]).filter(x=>x.toVrij).map(x=>x.amt));
-    rows.push({ym,begin,inc,exp,incI,expI,inv,sI,sE,sV,ret,retL,end:v,vrij:vr});
+    rows.push({ym,begin,inc,incL,exp,incI,expI,inv,sI,sE,sV,ret,retL,end:v,vrij:vr});
   }
   // venster: 12 maanden vanaf (volgende maand + kortOff); maanden t/m nu zijn werkelijke cijfers
   const out=[];
@@ -1475,7 +1475,7 @@ function kortTableHtml(){
   const tr=(label,fn,cls='')=>`<tr class="${cls}"><th class="yname">${label}</th>${rows.map(fn).join('')}</tr>`;
   return `<table class="ytab ktab"><thead><tr><th class="yname"></th>${rows.map(r=>`<th class="${r.past?'kpast':''}${r.ym===cy_?' ynow':''}">${MN[+r.ym.slice(5)-1]} ${r.ym.slice(2,4)}<div class="small" style="font-weight:400;text-transform:none;letter-spacing:0">${r.past?(r.ym===cy_?'tot nu':'werkelijk'):'verwacht'}</div></th>`).join('')}</tr></thead><tbody>
     ${tr('Vermogen begin',r=>`<td class="n">${E(r.begin)}</td>`)}
-    ${tr('+ Inkomsten',r=>cell(r.inc,1))}
+    ${tr('+ Inkomsten',r=>cell(r.inc,1,r.incL))}
     ${tr('+ Incidentele inkomsten',r=>cell(r.sI,1,r.incI))}
     ${tr('− Uitgaven',r=>cell(r.exp,-1))}
     ${tr('− Incidentele uitgaven',r=>cell(r.sE,-1,r.expI))}
