@@ -1521,17 +1521,30 @@ function histAvg(kind){ const ms=lastFullMonths(kind==='uit'?baseN():12), set=ne
   for(const a of S.actuals){ if(a.kind!==kind||isInv(a)) continue; const ym=a.date.slice(0,7); if(!set.has(ym)) continue; per[ym]=(per[ym]||0)+ +a.amount; }
   const filled=Object.keys(per); return {avg:filled.length?sum(Object.values(per))/filled.length:0, n:filled.length}; }
 const isOnceRec = r => r.end && r.end===r.start;
+/* Rest van de lopende maand: wat na vandaag nog binnenkomt of wordt betaald (nog niet in je saldi) */
+function curRest(){
+  const ym=curYm(), today=todayStr(), incI=[], expI=[], inv=[];
+  for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && r.start===ym) incI.push({txt:r.name+(r.person?' ('+r.person+')':'')+' (verwacht)',amt:+r.amount});
+  for(const e of S.expected) if(e.ym===ym) (e.kind==='in'?incI:expI).push({txt:(e.note||e.cat)+' (verwacht)',amt:+e.amount});
+  for(const a of S.actuals) if(!a.grid && a.date.slice(0,7)===ym && a.date>today){ const it={txt:(a.note||a.cat)+' ('+dNl(a.date)+', nog te betalen)',amt:+a.amount};
+    if(a.kind==='in') { it.txt=(a.note||a.cat)+' ('+dNl(a.date)+', nog te ontvangen)'; incI.push(it); } else if(a.monthTotal==null) (isInv(a)?inv:expI).push(it); }
+  const mat=sum(openAccs().map(maturityOf).filter(m=>m&&m.amount!=null&&m.date>today&&m.date.slice(0,7)===ym).map(m=>m.amount));
+  const net=sum(incI.map(x=>x.amt))-sum(expI.map(x=>x.amt))-sum(inv.map(x=>x.amt));
+  return {incI,expI,inv,net,mat};
+}
 function actualMonthRow(ym){
-  const prev=iYm(ymI(ym)-1), sb=monthStatus(prev), se=monthStatus(ym);
-  // lopende maand: losse bedragen met een datum na vandaag nog niet (die staan in de eerste verwachte maand, want de planning start bij je saldi van nu)
-  const today=todayStr(), inM=a=>a.date.slice(0,7)===ym && (a.grid || ym!==curYm() || a.date<=today);
+  const prev=iYm(ymI(ym)-1), sb=monthStatus(prev), se=monthStatus(ym), isCur=ym===curYm(), today=todayStr();
+  // lopende maand: losse bedragen tot en met vandaag als werkelijk, de rest van de maand als verwacht; eindvermogen = saldi van nu ± die rest
+  const inM=a=>a.date.slice(0,7)===ym && (a.grid || !isCur || a.date<=today);
   const incR=S.actuals.filter(a=>a.kind==='in'&&a.grid&&inM(a)), incN=S.actuals.filter(a=>a.kind==='in'&&!a.grid&&inM(a));
   const expR=S.actuals.filter(a=>a.kind==='uit'&&a.grid&&!isInv(a)&&inM(a)), expN=S.actuals.filter(a=>a.kind==='uit'&&!a.grid&&!isInv(a)&&inM(a));
   const invs=S.actuals.filter(a=>isInv(a)&&inM(a));
   const L=arr=>arr.map(a=>({txt:a.note||a.cat,amt:+a.amount}));
-  const inc=sum(incR.map(a=>+a.amount)), sI=sum(incN.map(a=>+a.amount)), exp=sum(expR.map(a=>+a.amount)), sE=sum(expN.map(a=>+a.amount)), sV=sum(invs.map(a=>+a.amount));
-  const begin=sb.total, end=se.total, ret=end-begin-inc-sI+exp+sE+sV;
-  return {ym,past:true,begin,inc,exp,incI:L(incN),expI:L(expN),inv:L(invs),sI,sE,sV,ret,end,vrij:se.besch,known:se.known};
+  const R=isCur?curRest():{incI:[],expI:[],inv:[],net:0,mat:0};
+  const incI=[...L(incN),...R.incI], expI=[...L(expN),...R.expI], inv=[...L(invs),...R.inv];
+  const inc=sum(incR.map(a=>+a.amount)), sI=sum(incI.map(a=>a.amt)), exp=sum(expR.map(a=>+a.amount)), sE=sum(expI.map(a=>a.amt)), sV=sum(inv.map(a=>a.amt));
+  const begin=sb.total, end=se.total+R.net, ret=end-begin-inc-sI+exp+sE+sV;
+  return {ym,past:true,cur:isCur,begin,inc,exp,incI,expI,inv,sI,sE,sV,ret,end,vrij:se.besch+R.net+R.mat,known:se.known};
 }
 
 /* ===== Verwacht rendement per rekening, per maand (vanaf volgende maand) =====
@@ -1598,17 +1611,17 @@ function kortPlan(off=kortOff,count=12){
   const mats=openAccs().map(maturityOf).filter(m=>m&&m.amount!=null&&m.date>today);
   const inlegNB=sum(openAccs().filter(a=>!a.besch&&+a.inleg>0&&(!a.endDate||a.endDate>today)).map(a=>+a.inleg));
   const sim=expReturnSim(Math.max(1,H)), lost=cashInterest(Math.max(1,H));
-  let v=st.total, vr=st.besch; const rows=[];
+  const CR=curRest(); let v=st.total+CR.net, vr=st.besch+CR.net+CR.mat; const rows=[];
   for(let k=1;k<=H;k++){
-    const ym=iYm(c+k), inFirst=d=> k===1 ? (d>today && d.slice(0,7)<=ym) : d.slice(0,7)===ym;
+    const ym=iYm(c+k), inFirst=d=> d.slice(0,7)===ym;
     // reguliere inkomsten
     const {inc,incL}=planInc(ym);
     const exp=planExp(ym);
     // incidenteel
     const incI=[], expI=[], inv=[];
-    for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && (k===1? r.start>=curYm()&&r.start<=ym : r.start===ym)) incI.push({txt:r.name+(r.person?' ('+r.person+')':''),amt:+r.amount});
-    for(const e of S.expected) if(e.ym===ym || (k===1 && e.ym===curYm())) (e.kind==='in'?incI:expI).push({txt:e.note||e.cat,amt:+e.amount});
-    const lbl=a=>(a.note||a.cat)+(k===1&&a.date.slice(0,7)<ym?' ('+dNl(a.date)+', nog te betalen deze maand)':'');
+    for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && r.start===ym) incI.push({txt:r.name+(r.person?' ('+r.person+')':''),amt:+r.amount});
+    for(const e of S.expected) if(e.ym===ym) (e.kind==='in'?incI:expI).push({txt:e.note||e.cat,amt:+e.amount});
+    const lbl=a=>a.note||a.cat;
     for(const a of S.actuals) if(a.kind==='uit' && !a.grid && a.monthTotal==null && inFirst(a.date)) (isInv(a)?inv:expI).push({txt:lbl(a),amt:+a.amount});
     for(const a of S.actuals) if(a.kind==='in' && !a.grid && inFirst(a.date)) incI.push({txt:lbl(a),amt:+a.amount});
     const sI=sum(incI.map(x=>x.amt)), sE=sum(expI.map(x=>x.amt)), sV=sum(inv.map(x=>x.amt));
@@ -1649,7 +1662,7 @@ function kortTableHtml(){
   const tip=list=>esc(list.map(x=>x.txt+': '+E(x.amt)).join('\n'));
   const cell=(v,sign,list)=>`<td class="n ${v&&sign<0?'neg':v&&sign>0?'pos':''}" ${list&&list.length?`title="${tip(list)}" style="cursor:help;text-decoration:underline dotted"`:''}>${v?(sign<0?'−':sign>0?'+':'')+E(Math.abs(v)):''}</td>`;
   const tr=(label,fn,cls='')=>`<tr class="${cls}"><th class="yname">${label}</th>${rows.map(fn).join('')}</tr>`;
-  return `<table class="ytab ktab"><thead><tr><th class="yname"></th>${rows.map(r=>`<th class="${r.past?'kpast':''}${r.ym===cy_?' ynow':''}">${MN[+r.ym.slice(5)-1]} ${r.ym.slice(2,4)}<div class="small" style="font-weight:400;text-transform:none;letter-spacing:0">${r.past?(r.ym===cy_?'tot nu':'werkelijk'):'verwacht'}</div></th>`).join('')}</tr></thead><tbody>
+  return `<table class="ytab ktab"><thead><tr><th class="yname"></th>${rows.map(r=>`<th class="${r.past?'kpast':''}${r.ym===cy_?' ynow':''}">${MN[+r.ym.slice(5)-1]} ${r.ym.slice(2,4)}<div class="small" style="font-weight:400;text-transform:none;letter-spacing:0">${r.past?(r.ym===cy_?'deze maand':'werkelijk'):'verwacht'}</div></th>`).join('')}</tr></thead><tbody>
     ${tr('Vermogen begin',r=>`<td class="n">${E(r.begin)}</td>`)}
     ${tr('+ Inkomsten',r=>cell(r.inc,1,r.incL))}
     ${tr('+ Incidentele inkomsten',r=>cell(r.sI,1,r.incI))}
@@ -3003,7 +3016,7 @@ const HELP={
   <li><b>Vaste lasten die veranderen</b> (Invoeren → Vast en terugkerend): alleen het verschil met nu telt, vanaf de maand van de wijziging. Stopt een lening van €300, dan dalen je uitgaven vanaf die maand met €300.</li>
   <li><b>Grote uitgaven:</b> tellen volledig mee in de maand van betaling (niet afgeschreven), want dan gaat het geld van je rekening.</li>
   <li><b>Rendement:</b> de eerste <b>{RY} jaar</b> per rekening: spaarrente met rente op rente, deposito-rente op de uitkeringsdatum, en het verwachte rendement per belegging. Daarna het percentage uit Instellingen over het hele vermogen. Box 3-belasting gaat er in januari af.</li>
-  <li><b>Werkelijke maanden:</b> het rendement is het verschil tussen je saldi en de ingevoerde bedragen.</li></ul>
+  <li><b>Werkelijke maanden:</b> het rendement is het verschil tussen je saldi en de ingevoerde bedragen.</li><li><b>Deze maand:</b> wat al betaald of ontvangen is plus wat er later deze maand nog gepland staat (bijvoorbeeld een grote uitgave op de 30e). Het eindvermogen is je saldo van nu min die geplande uitgaven, plus geplande inkomsten.</li></ul>
   <p><i>Voorbeeld:</i> begin €76.000 + €5.500 inkomsten − €3.700 uitgaven − €6.000 warmtepomp + €90 rente = eind €71.890.</p>`],
  prognose:['Planning – per jaar (30 jaar)',`<p>Je vermogen per jaar, 30 jaar vooruit. Een berekening, geen garantie en geen beleggingsadvies.</p>
   <p><b>Per jaar:</b> vermogen begin + rendement + inkomsten − uitgaven = vermogen eind.</p>
