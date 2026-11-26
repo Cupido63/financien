@@ -959,14 +959,19 @@ function yearRend(acc, y){
     const e=endM.value-startM.value-fl; const basis=startM.value+Math.max(0,fl);
     return {eur:e, pct:basis>0?e/basis:null, base:basis, partial:endM.date.slice(0,4)==String(curY()) && y==curY(), from:startM.date, to:endM.date};
   }
-  if(!hasRate(acc)) return null;
-  let from=y+'-01-01'; const firstM=ms[0]; if(firstM.date>from) from=firstM.date; if(acc.start&&acc.start>from) from=acc.start;
-  const to=(y+1)+'-01-01'; if(from>=to) return null;
-  const ic=interestCalc(acc,from,to); if(!ic.avg) return null;
+  // ontvangen rente die je zelf hebt ingevoerd telt altijd, ook zonder rentepercentage of na sluiting
   const rec=S.interest.filter(x=>x.acc===acc.id&&x.date.slice(0,4)==String(y));
-  if(rec.length){ const e=sum(rec.map(x=>x.amount)); const cur=y==curY();
-    const el=cur?Math.max(1,daysBetween(from,todayStr())):ic.days;
-    return {eur:e, pct:e/(ic.avg*el/365), base:ic.avg, received:true, partial:cur}; }
+  let from=y+'-01-01'; const firstM=ms[0]; if(firstM && firstM.date>from) from=firstM.date; if(acc.start&&acc.start>from) from=acc.start;
+  const to=(y+1)+'-01-01';
+  if(rec.length){ const e=sum(rec.map(x=>x.amount)), cur=y==curY();
+    // basis: het saldo vóór de uitbetaling (bij een deposito staat de rente op de einddatum vaak pas ná het laatste saldo)
+    const pre=m=>{ const d=rec[0].date; const v=valueAt(acc.id,d); return v&&v.value>0?v.value:(ms.filter(x=>x.date<=d&&x.value>0).pop()||{}).value; };
+    const til=cur&&todayStr()<to?todayStr():to, ic=from<til?interestCalc(acc,from,til):{avg:null,days:0};
+    let base=ic.avg>0?ic.avg:pre(), days=ic.avg>0?ic.days:365; if(!base){ const m=ms.find(x=>x.value>0); base=m?m.value:0; days=365; }
+    return {eur:e, pct:base?e/(base*Math.max(1,days)/365):null, base:base*Math.max(1,days)/365, received:true, partial:cur}; }
+  if(!hasRate(acc)) return null;
+  if(from>=to) return null;
+  const ic=interestCalc(acc,from,to); if(!ic.avg) return null;
   if(acc.type==='deposito'){ // deposito: rendement alleen in het jaar waarin de rente wordt uitgekeerd
     const st=acc.start||firstM.date; let end=endDateOf(acc); if(acc.closed && (!end || acc.closed<end)) end=acc.closed;
     const pm=payoutMonths(acc,y+'-01',y+'-12'), today=todayStr(); let eur=0, fut=false, n=0;
@@ -1518,7 +1523,8 @@ function histAvg(kind){ const ms=lastFullMonths(kind==='uit'?baseN():12), set=ne
 const isOnceRec = r => r.end && r.end===r.start;
 function actualMonthRow(ym){
   const prev=iYm(ymI(ym)-1), sb=monthStatus(prev), se=monthStatus(ym);
-  const inM=a=>a.date.slice(0,7)===ym;
+  // lopende maand: losse bedragen met een datum na vandaag nog niet (die staan in de eerste verwachte maand, want de planning start bij je saldi van nu)
+  const today=todayStr(), inM=a=>a.date.slice(0,7)===ym && (a.grid || ym!==curYm() || a.date<=today);
   const incR=S.actuals.filter(a=>a.kind==='in'&&a.grid&&inM(a)), incN=S.actuals.filter(a=>a.kind==='in'&&!a.grid&&inM(a));
   const expR=S.actuals.filter(a=>a.kind==='uit'&&a.grid&&!isInv(a)&&inM(a)), expN=S.actuals.filter(a=>a.kind==='uit'&&!a.grid&&!isInv(a)&&inM(a));
   const invs=S.actuals.filter(a=>isInv(a)&&inM(a));
@@ -1602,8 +1608,9 @@ function kortPlan(off=kortOff,count=12){
     const incI=[], expI=[], inv=[];
     for(const r of S.recurring) if(r.kind==='in' && isOnceRec(r) && (k===1? r.start>=curYm()&&r.start<=ym : r.start===ym)) incI.push({txt:r.name+(r.person?' ('+r.person+')':''),amt:+r.amount});
     for(const e of S.expected) if(e.ym===ym || (k===1 && e.ym===curYm())) (e.kind==='in'?incI:expI).push({txt:e.note||e.cat,amt:+e.amount});
-    for(const a of S.actuals) if(a.kind==='uit' && !a.grid && a.monthTotal==null && inFirst(a.date)) (isInv(a)?inv:expI).push({txt:a.note||a.cat,amt:+a.amount});
-    for(const a of S.actuals) if(a.kind==='in' && !a.grid && inFirst(a.date)) incI.push({txt:a.note||a.cat,amt:+a.amount});
+    const lbl=a=>(a.note||a.cat)+(k===1&&a.date.slice(0,7)<ym?' ('+dNl(a.date)+', nog te betalen deze maand)':'');
+    for(const a of S.actuals) if(a.kind==='uit' && !a.grid && a.monthTotal==null && inFirst(a.date)) (isInv(a)?inv:expI).push({txt:lbl(a),amt:+a.amount});
+    for(const a of S.actuals) if(a.kind==='in' && !a.grid && inFirst(a.date)) incI.push({txt:lbl(a),amt:+a.amount});
     const sI=sum(incI.map(x=>x.amt)), sE=sum(expI.map(x=>x.amt)), sV=sum(inv.map(x=>x.amt));
     const li=lost[k-1]||{lost:0,gain:0}; const ret=(sim[k-1]?sim[k-1].total:0)-li.lost+li.gain, retL=[...(sim[k-1]?sim[k-1].byAcc:[]),...(Math.abs(li.gain)>=0.5?[{txt:'Rente over gespaard overschot',amt:li.gain,toVrij:true}]:[]),...(li.lost>=0.5?[{txt:'Correctie: lager saldo door aankopen/uitgaven',amt:-li.lost,toVrij:true}]:[])];
     const begin=v; v=v+inc-exp+sI-sE-sV+ret;
